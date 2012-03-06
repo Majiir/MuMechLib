@@ -13,7 +13,8 @@ class MuMechJeb : MuMechPart {
         NORMAL_PLUS,
         NORMAL_MINUS,
         RADIAL_PLUS,
-        RADIAL_MINUS
+        RADIAL_MINUS,
+        STANDBY
 	}
 
     public enum DoorStat {
@@ -36,6 +37,8 @@ class MuMechJeb : MuMechPart {
         }
     }
 
+    private static bool calibrationMode = false;
+
     private static string[] texts = { "KILL\nROT", "SURF", "PRO\nGRAD", "RETR\nGRAD", "NML\n+", "NML\n-", "RAD\n+", "RAD\n-" };
     protected Rect windowPos;
 
@@ -46,16 +49,18 @@ class MuMechJeb : MuMechPart {
     private Vector3 act = Vector3.zero;
     private Vector3 k_integral = Vector3.zero;
     private Vector3 k_prev_err = Vector3.zero;
-    public float k_Kp = 5.0F;
+    public float k_Kp = 13.0F;
     public float k_Ki = 0.0F;
     public float k_Kd = 0.0F;
     public float Kp = 20.0F;
     public float Ki = 0.15F;
     public float Kd = 50.0F;
-    public float Damping = 0.0F;
+    public float Damping = 1.0F;
 
-    public float srf_hdg = 90.0F;
-    public float srf_pth = 90.0F;
+    private float resetTime = 0;
+
+    public string srf_hdg = "90";
+    public string srf_pth = "90";
     public float srf_act_hdg = 90.0F;
     public float srf_act_pth = 90.0F;
     public bool srf_act = false;
@@ -79,23 +84,19 @@ class MuMechJeb : MuMechPart {
     }
 
     public override void onFlightStateLoad(Dictionary<string, KSPParseable> parsedData) {
-        KSPParseable tmp;
-        parsedData.TryGetValue("window", out tmp);
-        windowPos = new Rect(tmp.value_v2.x, tmp.value_v2.y, 10, 10);
+        if (parsedData.ContainsKey("window")) {
+            windowPos = new Rect(parsedData["window"].value_v2.x, parsedData["window"].value_v2.y, 10, 10);
+        }
         base.onFlightStateLoad(parsedData);
     }
 
     private void drive(FlightCtrlState s) {
-        if (isControllable && (mode != Mode.OFF) && s.killRot) {
-            if ((mode == Mode.SURFACE) && (!srf_act)) {
-                return;
-            }
-
+        if (isControllable && InputLockManager.IsUnlocked(ControlTypes.PITCH) && (mode != Mode.OFF) && (mode != Mode.STANDBY)) {
             Vector3 MOI = vessel.findLocalMOI(vessel.findWorldCenterOfMass());
 
-            Kp = MOI.magnitude / 2.0F;
-            Ki = MOI.magnitude * 0.003F;
-            Kd = MOI.magnitude;
+            Kp = Mathf.Clamp(MOI.magnitude * 0.45F, 1.0F, 100.0F);
+            Ki = Mathf.Clamp(MOI.magnitude * 0.003F, 0.01F, 1.0F);
+            Kd = Mathf.Clamp(MOI.magnitude, 1.5F, 100.0F);
 
             Vector3 err = vessel.transform.InverseTransformDirection(vessel.rigidbody.angularVelocity);
             k_integral += err * TimeWarp.fixedDeltaTime;
@@ -113,7 +114,13 @@ class MuMechJeb : MuMechPart {
             if ((userCommanding & 2) == 0) s.roll = Mathf.Clamp(s.roll + k_act.y, -1.0F, 1.0F);
             if ((userCommanding & 4) == 0) s.yaw = Mathf.Clamp(s.yaw + k_act.z, -1.0F, 1.0F);
 
+            if ((mode == Mode.SURFACE) && (!srf_act)) {
+                return;
+            }
+
             if (mode != Mode.KILLROT) {
+                s.killRot = false;
+
                 Vector3d up = (vessel.findWorldCenterOfMass() - vessel.mainBody.position).normalized;
                 Vector3d prograde = vessel.orbit.GetRelativeVel().normalized;
                 Quaternion obt = Quaternion.LookRotation(prograde, up);
@@ -157,11 +164,14 @@ class MuMechJeb : MuMechPart {
                 deriv = (err - prev_err) / TimeWarp.fixedDeltaTime;
                 act = Kp * err + Ki * integral + Kd * deriv;
                 prev_err = err;
-                /*
-                if (Input.GetKeyDown(KeyCode.KeypadMultiply)) {
-                    print("Prograde: " + prograde + "\nUp: " + up + "\ntgt_fw: " + (Vector3d)tgt_fwd + "\ntgt_up: " + (Vector3d)tgt_up + "\nerr: " + (Vector3d)err + "\nint: " + (Vector3d)integral + "\nderiv: " + (Vector3d)deriv + "\nact: " + (Vector3d)act + "\nvec_up: " + (Vector3d)Vector3.up + "\nvess_up: " + (Vector3d)vessel.transform.up + "\nvess_fwd: " + (Vector3d)vessel.transform.forward + "\nroll: " + Vector3.Dot(vessel.transform.right, tgt_up));
+
+                if (calibrationMode) {
+                    if (Input.GetKeyDown(KeyCode.KeypadMultiply)) {
+                        print("Prograde: " + prograde + "\nUp: " + up + "\ntgt_fw: " + (Vector3d)tgt_fwd + "\ntgt_up: " + (Vector3d)tgt_up + "\nerr: " + (Vector3d)err + "\nint: " + (Vector3d)integral + "\nderiv: " + (Vector3d)deriv + "\nact: " + (Vector3d)act + "\nvec_up: " + (Vector3d)Vector3.up + "\nvess_up: " + (Vector3d)vessel.transform.up + "\nvess_fwd: " + (Vector3d)vessel.transform.forward + "\nroll: " + Vector3.Dot(vessel.transform.right, tgt_up));
+                        traceTrans("", transform);
+                    }
                 }
-                */
+
                 if (userCommanding != 0) {
                     prev_err = Vector3.zero;
                     integral = Vector3.zero;
@@ -186,53 +196,70 @@ class MuMechJeb : MuMechPart {
 
         GUILayout.BeginVertical();
 
-        if (GUILayout.Button("OFF", sty, GUILayout.ExpandWidth(true))) {
-            mode = Mode.OFF;
-        }
-
-        mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, texts, 2, sty) + 1;
-
-        if (mode == Mode.SURFACE) {
-            GUIStyle msty = new GUIStyle(GUI.skin.button);
-            msty.padding = new RectOffset();
-
-            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
-            GUILayout.Label("HDG: " + Mathf.RoundToInt(srf_hdg), GUILayout.ExpandWidth(true));
-            if (GUILayout.RepeatButton("+", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
-                srf_hdg += Time.fixedDeltaTime * 10.0F;
-                if (srf_hdg >= 360.0F) {
-                    srf_hdg -= 360.0F;
-                }
+        if (mode == Mode.OFF) {
+            if (GUILayout.Button("ON", sty, GUILayout.ExpandWidth(true))) {
+                mode = Mode.STANDBY;
             }
-            if (GUILayout.RepeatButton("-", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
-                srf_hdg -= Time.fixedDeltaTime * 10.0F;
-                if (srf_hdg < 0) {
-                    srf_hdg += 360.0F;
-                }
+        } else {
+            if (GUILayout.Button("OFF", sty, GUILayout.ExpandWidth(true))) {
+                mode = Mode.OFF;
+                windowPos.width = windowPos.height = 10;
             }
-            GUILayout.EndHorizontal();
 
-            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
-            GUILayout.Label("PTH: " + Mathf.RoundToInt(srf_pth), GUILayout.ExpandWidth(true));
-            if (GUILayout.RepeatButton("+", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
-                srf_pth += Time.fixedDeltaTime * 10.0F;
-                if (srf_pth >= 90.0F) {
-                    srf_pth = 90.0F;
-                }
-            }
-            if (GUILayout.RepeatButton("-", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
-                srf_pth -= Time.fixedDeltaTime * 10.0F;
-                if (srf_pth < -90.0F) {
-                    srf_pth = -90.0F;
-                }
-            }
-            GUILayout.EndHorizontal();
+            mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, texts, 2, sty) + 1;
 
-            if (GUILayout.Button("EXECUTE", sty, GUILayout.ExpandWidth(true))) {
-                print("MechJeb activating SURF mode. HDG = " + srf_act_hdg + " - PTH = " + srf_act_pth);
-                srf_act_hdg = Mathf.Round(srf_hdg);
-                srf_act_pth = Mathf.Round(srf_pth);
-                srf_act = true;
+            if (mode == Mode.SURFACE) {
+                GUIStyle msty = new GUIStyle(GUI.skin.button);
+                msty.padding = new RectOffset();
+
+                GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+                GUILayout.Label("HDG", GUILayout.Width(30));
+                srf_hdg = GUILayout.TextField(srf_hdg, GUILayout.ExpandWidth(true));
+                if (GUILayout.Button("+", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
+                    float tmp = Convert.ToInt16(srf_hdg);
+                    tmp += 1;
+                    if (tmp >= 360.0F) {
+                        tmp -= 360.0F;
+                    }
+                    srf_hdg = Mathf.RoundToInt(tmp).ToString();
+                }
+                if (GUILayout.Button("-", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
+                    float tmp = Convert.ToInt16(srf_hdg);
+                    tmp -= 1;
+                    if (tmp < 0) {
+                        tmp += 360.0F;
+                    }
+                    srf_hdg = Mathf.RoundToInt(tmp).ToString();
+                }
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+                GUILayout.Label("PTH", GUILayout.Width(30));
+                srf_pth = GUILayout.TextField(srf_pth, GUILayout.ExpandWidth(true));
+                if (GUILayout.Button("+", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
+                    float tmp = Convert.ToInt16(srf_pth);
+                    tmp += 1;
+                    if (tmp >= 360.0F) {
+                        tmp -= 360.0F;
+                    }
+                    srf_pth = Mathf.RoundToInt(tmp).ToString();
+                }
+                if (GUILayout.Button("-", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
+                    float tmp = Convert.ToInt16(srf_pth);
+                    tmp -= 1;
+                    if (tmp < 0) {
+                        tmp += 360.0F;
+                    }
+                    srf_pth = Mathf.RoundToInt(tmp).ToString();
+                }
+                GUILayout.EndHorizontal();
+
+                if (GUILayout.Button("EXECUTE", sty, GUILayout.ExpandWidth(true))) {
+                    srf_act_hdg = Convert.ToInt16(srf_hdg);
+                    srf_act_pth = Convert.ToInt16(srf_pth);
+                    srf_act = true;
+                    print("MechJeb activating SURF mode. HDG = " + srf_act_hdg + " - PTH = " + srf_act_pth);
+                }
             }
         }
 
@@ -240,41 +267,43 @@ class MuMechJeb : MuMechPart {
     }
 
     private void drawGUI() {
-        if (isControllable && FlightInputHandler.state.killRot) {
+        if (isControllable) {
             GUI.skin = HighLogic.Skin;
-            windowPos = GUILayout.Window(1, windowPos, WindowGUI, "MechJeb");
+            windowPos = GUILayout.Window(1, windowPos, WindowGUI, "MechJeb", GUILayout.MinWidth(100));
         }
     }
 
     protected override void onPartStart() {
         stackIcon.SetIcon(DefaultIcons.ADV_SAS);
+        if ((windowPos.x == 0) && (windowPos.y == 0)) {
+            windowPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
+        }
+
+        brain = (GameObject)GameObject.Instantiate(Resources.Load("Effects/fx_exhaustFlame_blue"));
+        brain.name = "brain_FX";
+        brain.transform.parent = transform.Find("model");
+        brain.transform.localPosition = new Vector3(0, 0.2F, 0);
+        brain.transform.localRotation = Quaternion.identity;
+
+        brain.AddComponent<Light>();
+        brain.light.color = XKCDColors.ElectricBlue;
+        brain.light.intensity = 0;
+        brain.light.range = 1.0F;
+
+        brain.particleEmitter.emit = false;
+        brain.particleEmitter.maxEmission = brain.particleEmitter.minEmission = 0;
+        brain.particleEmitter.maxEnergy = 0.75F;
+        brain.particleEmitter.minEnergy = 0.25F;
+        brain.particleEmitter.maxSize = brain.particleEmitter.minSize = 0.1F;
+        brain.particleEmitter.localVelocity = Vector3.zero;
+        brain.particleEmitter.rndVelocity = new Vector3(2.0F, 0.5F, 2.0F);
+        brain.particleEmitter.useWorldSpace = false;
     }
 
     protected override void onFlightStart() {
-        windowPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
         RenderingManager.AddToPostDrawQueue(3, new Callback(drawGUI));
         FlightInputHandler.OnFlyByWire += new FlightInputHandler.FlightInputCallback(drive);
         flyByWire = true;
-
-        if (brain == null) {
-            brain = (GameObject)GameObject.Instantiate(Resources.Load("Effects/fx_exhaustFlame_blue"));
-            brain.transform.parent = transform.Find("model/base/brain");
-            brain.transform.position = new Vector3(0, 0.6F, 0);
-
-            brain.AddComponent<Light>();
-            brain.light.color = XKCDColors.ElectricBlue;
-            brain.light.intensity = 0;
-            brain.light.range = 1.0F;
-
-            brain.particleEmitter.emit = false;
-            brain.particleEmitter.maxEmission = brain.particleEmitter.minEmission = 0;
-            brain.particleEmitter.maxEnergy = 0.75F;
-            brain.particleEmitter.minEnergy = 0.25F;
-            brain.particleEmitter.maxSize = brain.particleEmitter.minSize = 0.1F;
-            brain.particleEmitter.localVelocity = Vector3.zero;
-            brain.particleEmitter.rndVelocity = new Vector3(2.0F, 0.5F, 2.0F);
-            brain.particleEmitter.useWorldSpace = false;
-        }
     }
 
     protected override void onPartFixedUpdate() {
@@ -286,7 +315,7 @@ class MuMechJeb : MuMechPart {
             brain.light.intensity = 0;
         } else {
             if (doorStat == DoorStat.OPEN) {
-                brain.particleEmitter.maxEmission = doorStress * 1000.0F;
+                brain.particleEmitter.maxEmission = (doorStress - doorStressMin) * 1000.0F;
                 brain.particleEmitter.minEmission = brain.particleEmitter.maxEmission / 2.0F;
                 brain.particleEmitter.emit = true;
             }
@@ -304,7 +333,7 @@ class MuMechJeb : MuMechPart {
             }
         }
 
-        if ((mode != Mode.OFF) && (doorStat == DoorStat.CLOSED) && (doorStress >= doorStressMax)) {
+        if ((doorStat == DoorStat.CLOSED) && (doorStress >= doorStressMax)) {
             doorStat = DoorStat.OPENING;
             doorProgr = 0;
         }
@@ -332,86 +361,91 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onPartUpdate() {
-        if (mode_changed) {
+        resetTime += Time.deltaTime;
+        if ((resetTime >= 5) || mode_changed || InputLockManager.IsLocked(ControlTypes.PITCH)) {
             integral = Vector3.zero;
             prev_err = Vector3.zero;
             act = Vector3.zero;
             k_integral = Vector3.zero;
             k_prev_err = Vector3.zero;
+            resetTime = 0;
+        }
+        if (mode_changed) {
             srf_act = false;
             windowPos.width = windowPos.height = 10;
 
             mode_changed = false;
         }
-        /*
-        bool printk = false;
 
-        float shift = 0.25F;
-        if (Input.GetKey(KeyCode.RightAlt)) {
-            shift = 0.05F;
-        }
+        if (calibrationMode) {
+            bool printk = false;
 
-        if (Input.GetKeyDown(KeyCode.Keypad7)) {
-            if (Input.GetKey(KeyCode.RightControl)) {
-                Kp += shift;
-            } else {
-                k_Kp += shift;
+            float shift = 0.25F;
+            if (Input.GetKey(KeyCode.RightAlt)) {
+                shift = 0.05F;
             }
-            printk = true;
-        }
-        if (Input.GetKeyDown(KeyCode.Keypad4)) {
-            if (Input.GetKey(KeyCode.RightControl)) {
-                Kp -= shift;
-            } else {
-                k_Kp -= shift;
+
+            if (Input.GetKeyDown(KeyCode.Keypad7)) {
+                if (Input.GetKey(KeyCode.RightControl)) {
+                    Kp += shift;
+                } else {
+                    k_Kp += shift;
+                }
+                printk = true;
             }
-            printk = true;
-        }
-        if (Input.GetKeyDown(KeyCode.Keypad8)) {
-            if (Input.GetKey(KeyCode.RightControl)) {
-                Ki += shift;
-            } else {
-                k_Ki += shift;
+            if (Input.GetKeyDown(KeyCode.Keypad4)) {
+                if (Input.GetKey(KeyCode.RightControl)) {
+                    Kp -= shift;
+                } else {
+                    k_Kp -= shift;
+                }
+                printk = true;
             }
-            printk = true;
-        }
-        if (Input.GetKeyDown(KeyCode.Keypad5)) {
-            if (Input.GetKey(KeyCode.RightControl)) {
-                Ki -= shift;
-            } else {
-                k_Ki -= shift;
+            if (Input.GetKeyDown(KeyCode.Keypad8)) {
+                if (Input.GetKey(KeyCode.RightControl)) {
+                    Ki += shift;
+                } else {
+                    k_Ki += shift;
+                }
+                printk = true;
             }
-            printk = true;
-        }
-        if (Input.GetKeyDown(KeyCode.Keypad9)) {
-            if (Input.GetKey(KeyCode.RightControl)) {
-                Kd += shift;
-            } else {
-                k_Kd += shift;
+            if (Input.GetKeyDown(KeyCode.Keypad5)) {
+                if (Input.GetKey(KeyCode.RightControl)) {
+                    Ki -= shift;
+                } else {
+                    k_Ki -= shift;
+                }
+                printk = true;
             }
-            printk = true;
-        }
-        if (Input.GetKeyDown(KeyCode.Keypad6)) {
-            if (Input.GetKey(KeyCode.RightControl)) {
-                Kd -= shift;
-            } else {
-                k_Kd -= shift;
+            if (Input.GetKeyDown(KeyCode.Keypad9)) {
+                if (Input.GetKey(KeyCode.RightControl)) {
+                    Kd += shift;
+                } else {
+                    k_Kd += shift;
+                }
+                printk = true;
             }
-            printk = true;
+            if (Input.GetKeyDown(KeyCode.Keypad6)) {
+                if (Input.GetKey(KeyCode.RightControl)) {
+                    Kd -= shift;
+                } else {
+                    k_Kd -= shift;
+                }
+                printk = true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad1)) {
+                Damping += shift;
+                printk = true;
+            }
+            if (Input.GetKeyDown(KeyCode.Keypad0)) {
+                Damping -= shift;
+                printk = true;
+            }
+            if (printk) {
+                print("k_Kp = " + k_Kp + " - k_Ki = " + k_Ki + " - k_Kd = " + k_Kd);
+                print("Kp = " + Kp + " - Ki = " + Ki + " - Kd = " + Kd + " - Damp = " + Damping);
+            }
         }
-        if (Input.GetKeyDown(KeyCode.Keypad1)) {
-            Damping += shift;
-            printk = true;
-        }
-        if (Input.GetKeyDown(KeyCode.Keypad0)) {
-            Damping -= shift;
-            printk = true;
-        }
-        if (printk) {
-            print("k_Kp = " + k_Kp + " - k_Ki = " + k_Ki + " - k_Kd = " + k_Kd);
-            print("Kp = " + Kp + " - Ki = " + Ki + " - Kd = " + Kd + " - Damp = " + Damping);
-        }
-         */
     }
 
     protected override void onDisconnect() {
