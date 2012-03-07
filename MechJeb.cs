@@ -241,7 +241,7 @@ class MuMechJeb : MuMechPart {
     }
 
     private void drive(FlightCtrlState s) {
-        if (isControllable && InputLockManager.IsUnlocked(ControlTypes.PITCH) && (mode != Mode.OFF) && (mode != Mode.STANDBY)) {
+        if (isControllable && (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate) && (mode != Mode.OFF) && (mode != Mode.STANDBY)) {
             Vector3 MOI = vessel.findLocalMOI(vessel.findWorldCenterOfMass());
 
             Vector3 err = vessel.transform.InverseTransformDirection(vessel.rigidbody.angularVelocity);
@@ -679,12 +679,13 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onPartUpdate() {
-        if (mode_changed || InputLockManager.IsLocked(ControlTypes.PITCH)) {
+        if ((integral.magnitude > 10) || (prev_err.magnitude > 10) || mode_changed) {
             integral = Vector3.zero;
             prev_err = Vector3.zero;
             act = Vector3.zero;
             k_integral = Vector3.zero;
             k_prev_err = Vector3.zero;
+            print("MechJeb resetting PID controller.");
         }
         if (mode_changed) {
             srf_act = false;
