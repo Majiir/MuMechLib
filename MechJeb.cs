@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.IO;
 using UnityEngine;
+using MuMech;
 
 class MuMechJeb : MuMechPart {
     public enum Mode {
@@ -24,6 +27,14 @@ class MuMechJeb : MuMechPart {
         CLOSING
     }
 
+    public enum WindowStat {
+        HIDDEN,
+        MINIMIZED,
+        NORMAL,
+        OPENING,
+        CLOSING
+    }
+
     private Mode _mode = Mode.OFF;
     public Mode mode {
         get {
@@ -38,10 +49,10 @@ class MuMechJeb : MuMechPart {
     }
 
     private static bool calibrationMode = false;
+    public static SettingsManager settings = null;
+    public bool settingsChanged = false;
 
-    private static string[] texts = { "KILL\nROT", "SURF", "PRO\nGRAD", "RETR\nGRAD", "NML\n+", "NML\n-", "RAD\n+", "RAD\n-" };
-    protected Rect windowPos;
-
+    // SAS
     private bool flyByWire = false;
     private bool mode_changed = false;
     private Vector3 integral = Vector3.zero;
@@ -53,11 +64,9 @@ class MuMechJeb : MuMechPart {
     public float k_Ki = 0.0F;
     public float k_Kd = 0.0F;
     public float Kp = 20.0F;
-    public float Ki = 0.15F;
-    public float Kd = 50.0F;
-    public float Damping = 1.0F;
-
-    private float resetTime = 0;
+    public float Ki = 0.0F;
+    public float Kd = 40.0F;
+    public float Damping = 0.0F;
 
     public string srf_hdg = "90";
     public string srf_pth = "90";
@@ -65,6 +74,101 @@ class MuMechJeb : MuMechPart {
     public float srf_act_pth = 90.0F;
     public bool srf_act = false;
 
+    // Main window
+    private WindowStat _main_windowStat;
+    protected WindowStat main_windowStat {
+        get { return _main_windowStat; }
+        set {
+            if (_main_windowStat != value) {
+                _main_windowStat = value;
+                settingsChanged = true;
+            }
+        }
+    }
+
+    private float _main_windowProgr;
+    protected float main_windowProgr {
+        get { return _main_windowProgr; }
+        set {
+            if (_main_windowProgr != value) {
+                _main_windowProgr = value;
+                settingsChanged = true;
+            }
+        }
+    }
+
+    // SmartASS window
+    protected static string[] SASS_texts = { "KILL\nROT", "SURF", "PRO\nGRAD", "RETR\nGRAD", "NML\n+", "NML\n-", "RAD\n+", "RAD\n-" };
+
+    private Rect _SASS_windowPos;
+    protected Rect SASS_windowPos {
+        get { return _SASS_windowPos; }
+        set {
+            if (_SASS_windowPos.x != value.x || _SASS_windowPos.y != value.y) {
+                settingsChanged = true;
+            }
+            _SASS_windowPos = value;
+        }
+    }
+
+    private WindowStat _SASS_windowStat;
+    protected WindowStat SASS_windowStat {
+        get { return _SASS_windowStat; }
+        set {
+            if (_SASS_windowStat != value) {
+                _SASS_windowStat = value;
+                settingsChanged = true;
+            }
+        }
+    }
+
+    // orbital window
+    private Rect _orbital_windowPos;
+    protected Rect orbital_windowPos {
+        get { return _orbital_windowPos; }
+        set {
+            if (_orbital_windowPos.x != value.x || _orbital_windowPos.y != value.y) {
+                settingsChanged = true;
+            }
+            _orbital_windowPos = value;
+        }
+    }
+
+    private WindowStat _orbital_windowStat;
+    protected WindowStat orbital_windowStat {
+        get { return _orbital_windowStat; }
+        set {
+            if (_orbital_windowStat != value) {
+                _orbital_windowStat = value;
+                settingsChanged = true;
+            }
+        }
+    }
+
+    // surface window
+    private Rect _surface_windowPos;
+    protected Rect surface_windowPos {
+        get { return _surface_windowPos; }
+        set {
+            if (_surface_windowPos.x != value.x || _surface_windowPos.y != value.y) {
+                settingsChanged = true;
+            }
+            _surface_windowPos = value;
+        }
+    }
+
+    private WindowStat _surface_windowStat;
+    protected WindowStat surface_windowStat {
+        get { return _surface_windowStat; }
+        set {
+            if (_surface_windowStat != value) {
+                _surface_windowStat = value;
+                settingsChanged = true;
+            }
+        }
+    }
+
+    // special FX
     public DoorStat doorStat = DoorStat.CLOSED;
     public float doorProgr = 0;
     public float doorSpeed = 1.0F;
@@ -78,25 +182,66 @@ class MuMechJeb : MuMechPart {
     public GameObject brain = null;
     public bool lightUp = false;
 
+    public MuMechJeb() {
+        if (settings == null) {
+            settings = new SettingsManager(Application.dataPath + "/../MuMech/MechJeb.cfg");
+        }
+    }
+
+    public void saveSettings() {
+        settings["main_windowStat"].value_integer = (int)main_windowStat;
+        settings["main_windowProgr"].value_decimal = main_windowProgr;
+        settings["SASS_windowPos"].value_vector = new Vector4(SASS_windowPos.x, SASS_windowPos.y);
+        settings["SASS_windowStat"].value_integer = (int)SASS_windowStat;
+        settings["orbital_windowPos"].value_vector = new Vector4(orbital_windowPos.x, orbital_windowPos.y);
+        settings["orbital_windowStat"].value_integer = (int)orbital_windowStat;
+        settings["surface_windowPos"].value_vector = new Vector4(surface_windowPos.x, surface_windowPos.y);
+        settings["surface_windowStat"].value_integer = (int)surface_windowStat;
+        settings.save();
+        settingsChanged = false;
+    }
+
+    public void loadSettings() {
+        main_windowStat = (WindowStat)settings["main_windowStat"].value_integer;
+        main_windowProgr = (float)settings["main_windowProgr"].value_decimal;
+        SASS_windowPos = new Rect(settings["SASS_windowPos"].value_vector.x, settings["SASS_windowPos"].value_vector.y, 10, 10);
+        SASS_windowStat = (WindowStat)settings["SASS_windowStat"].value_integer;
+        orbital_windowPos = new Rect(settings["orbital_windowPos"].value_vector.x, settings["orbital_windowPos"].value_vector.y, 10, 10);
+        orbital_windowStat = (WindowStat)settings["orbital_windowStat"].value_integer;
+        surface_windowPos = new Rect(settings["surface_windowPos"].value_vector.x, settings["surface_windowPos"].value_vector.y, 10, 10);
+        surface_windowStat = (WindowStat)settings["surface_windowStat"].value_integer;
+        settingsChanged = false;
+    }
+
     public override void onFlightStateSave(Dictionary<string, KSPParseable> partDataCollection) {
-        partDataCollection.Add("window", new KSPParseable(new Vector2(windowPos.x, windowPos.y), KSPParseable.Type.VECTOR2));
+        saveSettings();
+
+        partDataCollection.Add("mode", new KSPParseable((int)mode, KSPParseable.Type.INT));
+        partDataCollection.Add("srf_act", new KSPParseable(srf_act, KSPParseable.Type.BOOL));
+        partDataCollection.Add("srf_act_hdg", new KSPParseable(srf_act_hdg, KSPParseable.Type.FLOAT));
+        partDataCollection.Add("srf_act_pth", new KSPParseable(srf_act_pth, KSPParseable.Type.FLOAT));
+        partDataCollection.Add("srf_hdg", new KSPParseable(srf_hdg, KSPParseable.Type.STRING));
+        partDataCollection.Add("srf_pth", new KSPParseable(srf_pth, KSPParseable.Type.STRING));
+
         base.onFlightStateSave(partDataCollection);
     }
 
     public override void onFlightStateLoad(Dictionary<string, KSPParseable> parsedData) {
-        if (parsedData.ContainsKey("window")) {
-            windowPos = new Rect(parsedData["window"].value_v2.x, parsedData["window"].value_v2.y, 10, 10);
-        }
+        loadSettings();
+
+        if (parsedData.ContainsKey("mode")) mode = (Mode)parsedData["mode"].value_int;
+        if (parsedData.ContainsKey("srf_act")) srf_act = parsedData["srf_act"].value_bool;
+        if (parsedData.ContainsKey("srf_act_hdg")) srf_act_hdg = parsedData["srf_act_hdg"].value_float;
+        if (parsedData.ContainsKey("srf_act_pth")) srf_act_pth = parsedData["srf_act_pth"].value_float;
+        if (parsedData.ContainsKey("srf_hdg")) srf_hdg = parsedData["srf_hdg"].value;
+        if (parsedData.ContainsKey("srf_pth")) srf_pth = parsedData["srf_pth"].value;
+
         base.onFlightStateLoad(parsedData);
     }
 
     private void drive(FlightCtrlState s) {
         if (isControllable && InputLockManager.IsUnlocked(ControlTypes.PITCH) && (mode != Mode.OFF) && (mode != Mode.STANDBY)) {
             Vector3 MOI = vessel.findLocalMOI(vessel.findWorldCenterOfMass());
-
-            Kp = Mathf.Clamp(MOI.magnitude * 0.45F, 1.0F, 100.0F);
-            Ki = Mathf.Clamp(MOI.magnitude * 0.003F, 0.01F, 1.0F);
-            Kd = Mathf.Clamp(MOI.magnitude, 1.5F, 100.0F);
 
             Vector3 err = vessel.transform.InverseTransformDirection(vessel.rigidbody.angularVelocity);
             k_integral += err * TimeWarp.fixedDeltaTime;
@@ -108,7 +253,7 @@ class MuMechJeb : MuMechPart {
                 k_act *= Damping;
             }
 
-            int userCommanding = ((s.pitch != 0)?1:0) + ((s.roll != 0)?2:0) + ((s.yaw != 0)?4:0);
+            int userCommanding = (Mathfx.Approx(s.pitch, 0, 0.1F) ? 0 : 1) + (Mathfx.Approx(s.roll, 0, 0.1F) ? 0 : 2) + (Mathfx.Approx(s.yaw, 0, 0.1F) ? 0 : 4);
 
             if ((userCommanding & 1) == 0) s.pitch = Mathf.Clamp(s.pitch + k_act.x, -1.0F, 1.0F);
             if ((userCommanding & 2) == 0) s.roll = Mathf.Clamp(s.roll + k_act.y, -1.0F, 1.0F);
@@ -159,7 +304,10 @@ class MuMechJeb : MuMechPart {
                         break;
                 }
 
-                err = -vessel.transform.InverseTransformDirection(tgt_fwd);
+                Quaternion tgt = Quaternion.LookRotation(tgt_fwd, tgt_up);
+                Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(vessel.transform.rotation) * tgt);
+
+                err = new Vector3((delta.eulerAngles.x > 180) ? (delta.eulerAngles.x - 360.0F) : delta.eulerAngles.x, (delta.eulerAngles.y > 180) ? (delta.eulerAngles.y - 360.0F) : delta.eulerAngles.y, (delta.eulerAngles.z > 180) ? (delta.eulerAngles.z - 360.0F) : delta.eulerAngles.z) / 180.0F;
                 integral += err * TimeWarp.fixedDeltaTime;
                 deriv = (err - prev_err) / TimeWarp.fixedDeltaTime;
                 act = Kp * err + Ki * integral + Kd * deriv;
@@ -167,8 +315,7 @@ class MuMechJeb : MuMechPart {
 
                 if (calibrationMode) {
                     if (Input.GetKeyDown(KeyCode.KeypadMultiply)) {
-                        print("Prograde: " + prograde + "\nUp: " + up + "\ntgt_fw: " + (Vector3d)tgt_fwd + "\ntgt_up: " + (Vector3d)tgt_up + "\nerr: " + (Vector3d)err + "\nint: " + (Vector3d)integral + "\nderiv: " + (Vector3d)deriv + "\nact: " + (Vector3d)act + "\nvec_up: " + (Vector3d)Vector3.up + "\nvess_up: " + (Vector3d)vessel.transform.up + "\nvess_fwd: " + (Vector3d)vessel.transform.forward + "\nroll: " + Vector3.Dot(vessel.transform.right, tgt_up));
-                        traceTrans("", transform);
+                        print("Prograde: " + prograde + "\nUp: " + up + "\ntgt_fw: " + (Vector3d)tgt_fwd + "\ntgt_up: " + (Vector3d)tgt_up + "\nerr: " + (Vector3d)err + "\nint: " + (Vector3d)integral + "\nderiv: " + (Vector3d)deriv + "\nact: " + (Vector3d)act + "\nvec_up: " + (Vector3d)Vector3.up + "\nvess_up: " + (Vector3d)vessel.transform.up + "\nvess_fwd: " + (Vector3d)vessel.transform.forward);
                     }
                 }
 
@@ -176,17 +323,38 @@ class MuMechJeb : MuMechPart {
                     prev_err = Vector3.zero;
                     integral = Vector3.zero;
                 } else {
-                    s.pitch = Mathf.Clamp(s.pitch + act.z, -1.0F, 1.0F);
-                    s.roll = Mathf.Clamp(s.roll + Vector3.Dot(vessel.transform.right, tgt_up) * 10.0F, -1.0F, 1.0F);
-                    s.yaw = Mathf.Clamp(s.yaw - act.x, -1.0F, 1.0F);
+                    s.pitch = Mathf.Clamp(s.pitch + act.x, -1.0F, 1.0F);
+                    s.yaw = Mathf.Clamp(s.yaw - act.y, -1.0F, 1.0F);
+                    s.roll = Mathf.Clamp(s.roll + act.z, -1.0F, 1.0F);
                     doorStress += (Mathf.Min(Mathf.Abs(act.z), 1.0F) + Mathf.Min(Mathf.Abs(act.x), 1.0F)) * TimeWarp.fixedDeltaTime;
                 }
             }
         }
     }
 
-    private void WindowGUI(int windowID) {
-        GUI.DragWindow(new Rect(0, 0, 10000, 20));
+    private void main_WindowGUI(int windowID) {
+        GUILayout.BeginVertical();
+
+        bool SASS = SASS_windowStat != WindowStat.HIDDEN;
+        if (SASS != GUILayout.Toggle(SASS, "Smart A. S. S.")) {
+            SASS_windowStat = (SASS_windowStat == WindowStat.HIDDEN) ? WindowStat.NORMAL : WindowStat.HIDDEN;
+        }
+
+        bool orbital = orbital_windowStat != WindowStat.HIDDEN;
+        if (orbital != GUILayout.Toggle(orbital, "Orbital Information")) {
+            orbital_windowStat = (orbital_windowStat == WindowStat.HIDDEN) ? WindowStat.NORMAL : WindowStat.HIDDEN;
+        }
+
+        bool surface = surface_windowStat != WindowStat.HIDDEN;
+        if (surface != GUILayout.Toggle(surface, "Surface Information")) {
+            surface_windowStat = (surface_windowStat == WindowStat.HIDDEN) ? WindowStat.NORMAL : WindowStat.HIDDEN;
+        }
+
+        GUILayout.EndVertical();
+    }
+
+    private void SASS_WindowGUI(int windowID) {
+        GUI.DragWindow(new Rect(0, 0, 10000, 30));
 
         GUIStyle sty = new GUIStyle(GUI.skin.button);
         sty.normal.textColor = sty.focused.textColor = Color.white;
@@ -203,10 +371,10 @@ class MuMechJeb : MuMechPart {
         } else {
             if (GUILayout.Button("OFF", sty, GUILayout.ExpandWidth(true))) {
                 mode = Mode.OFF;
-                windowPos.width = windowPos.height = 10;
+                SASS_windowPos = new Rect(SASS_windowPos.x, SASS_windowPos.y, 10, 10);
             }
 
-            mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, texts, 2, sty) + 1;
+            mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, SASS_texts, 2, sty) + 1;
 
             if (mode == Mode.SURFACE) {
                 GUIStyle msty = new GUIStyle(GUI.skin.button);
@@ -215,6 +383,7 @@ class MuMechJeb : MuMechPart {
                 GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
                 GUILayout.Label("HDG", GUILayout.Width(30));
                 srf_hdg = GUILayout.TextField(srf_hdg, GUILayout.ExpandWidth(true));
+                srf_hdg = Regex.Replace(srf_hdg, @"[^\d]", "");
                 if (GUILayout.Button("+", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
                     float tmp = Convert.ToInt16(srf_hdg);
                     tmp += 1;
@@ -222,6 +391,7 @@ class MuMechJeb : MuMechPart {
                         tmp -= 360.0F;
                     }
                     srf_hdg = Mathf.RoundToInt(tmp).ToString();
+                    GUIUtility.keyboardControl = 0;
                 }
                 if (GUILayout.Button("-", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
                     float tmp = Convert.ToInt16(srf_hdg);
@@ -230,12 +400,14 @@ class MuMechJeb : MuMechPart {
                         tmp += 360.0F;
                     }
                     srf_hdg = Mathf.RoundToInt(tmp).ToString();
+                    GUIUtility.keyboardControl = 0;
                 }
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
                 GUILayout.Label("PTH", GUILayout.Width(30));
                 srf_pth = GUILayout.TextField(srf_pth, GUILayout.ExpandWidth(true));
+                srf_pth = Regex.Replace(srf_pth, @"[^\d]", "");
                 if (GUILayout.Button("+", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
                     float tmp = Convert.ToInt16(srf_pth);
                     tmp += 1;
@@ -243,6 +415,7 @@ class MuMechJeb : MuMechPart {
                         tmp -= 360.0F;
                     }
                     srf_pth = Mathf.RoundToInt(tmp).ToString();
+                    GUIUtility.keyboardControl = 0;
                 }
                 if (GUILayout.Button("-", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
                     float tmp = Convert.ToInt16(srf_pth);
@@ -251,6 +424,7 @@ class MuMechJeb : MuMechPart {
                         tmp += 360.0F;
                     }
                     srf_pth = Mathf.RoundToInt(tmp).ToString();
+                    GUIUtility.keyboardControl = 0;
                 }
                 GUILayout.EndHorizontal();
 
@@ -259,6 +433,7 @@ class MuMechJeb : MuMechPart {
                     srf_act_pth = Convert.ToInt16(srf_pth);
                     srf_act = true;
                     print("MechJeb activating SURF mode. HDG = " + srf_act_hdg + " - PTH = " + srf_act_pth);
+                    GUIUtility.keyboardControl = 0;
                 }
             }
         }
@@ -266,18 +441,151 @@ class MuMechJeb : MuMechPart {
         GUILayout.EndVertical();
     }
 
+    private void orbital_WindowGUI(int windowID) {
+        GUI.DragWindow(new Rect(0, 0, 10000, 10000));
+
+        GUIStyle txtR = new GUIStyle(GUI.skin.label);
+        txtR.alignment = TextAnchor.UpperRight;
+
+        GUILayout.BeginVertical();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Apoapsis", GUILayout.ExpandWidth(true));
+        GUILayout.Label(MuUtils.ToSI(vessel.orbit.ApA) + "m", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Periapsis", GUILayout.ExpandWidth(true));
+        GUILayout.Label(MuUtils.ToSI(vessel.orbit.PeA) + "m", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Time to Apoapsis", GUILayout.ExpandWidth(true));
+        GUILayout.Label(MuUtils.ToSI(vessel.orbit.timeToAp) + "s", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Time to Periapsis", GUILayout.ExpandWidth(true));
+        GUILayout.Label(MuUtils.ToSI(vessel.orbit.timeToPe) + "s", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.EndVertical();
+    }
+
+    private void surface_WindowGUI(int windowID) {
+        GUI.DragWindow(new Rect(0, 0, 10000, 10000));
+
+        GUIStyle txtR = new GUIStyle(GUI.skin.label);
+        txtR.alignment = TextAnchor.UpperRight;
+
+        Vector3 CoM = vessel.findWorldCenterOfMass();
+        Vector3d up = (CoM - vessel.mainBody.position).normalized;
+        Vector3d north = Vector3.Exclude(up, (vessel.mainBody.position + vessel.mainBody.transform.up * (float)vessel.mainBody.Radius) - CoM).normalized;
+        Quaternion srf_rot = Quaternion.LookRotation(north, up);
+        Quaternion vess_rot = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(vessel.transform.rotation) * srf_rot);
+        Vector3d vess_spd =  (vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM));
+        double v_spd = Vector3d.Dot(vess_spd, up);
+        vess_spd -= up * v_spd;
+
+        GUILayout.BeginVertical();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Altitude", GUILayout.ExpandWidth(true));
+        GUILayout.Label(MuUtils.ToSI(vessel.mainBody.GetAltitude(CoM)) + "m", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Pitch", GUILayout.ExpandWidth(true));
+        GUILayout.Label(((vess_rot.eulerAngles.x > 180) ? (360.0 - vess_rot.eulerAngles.x) : -vess_rot.eulerAngles.x).ToString("F3") + "°", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Heading", GUILayout.ExpandWidth(true));
+        GUILayout.Label(vess_rot.eulerAngles.y.ToString("F3") + "°", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Roll", GUILayout.ExpandWidth(true));
+        GUILayout.Label(((vess_rot.eulerAngles.z > 180) ? (vess_rot.eulerAngles.z - 360.0) : vess_rot.eulerAngles.z).ToString("F3") + "°", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Vertical Speed", GUILayout.ExpandWidth(true));
+        GUILayout.Label(MuUtils.ToSI(v_spd) + "m/s", txtR);
+        GUILayout.EndHorizontal();
+        
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Horizontal Speed", GUILayout.ExpandWidth(true));
+        GUILayout.Label(MuUtils.ToSI(vess_spd.magnitude) + "m/s", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Latitude", GUILayout.ExpandWidth(true));
+        GUILayout.Label(vessel.mainBody.GetLatitude(CoM).ToString("F6") + "°", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+        GUILayout.Label("Longitude", GUILayout.ExpandWidth(true));
+        GUILayout.Label(vessel.mainBody.GetLongitude(CoM).ToString("F6") + "°", txtR);
+        GUILayout.EndHorizontal();
+
+        GUILayout.EndVertical();
+    }
+
     private void drawGUI() {
-        if (isControllable) {
+        if (vessel == FlightGlobals.ActiveVessel) {
             GUI.skin = HighLogic.Skin;
-            windowPos = GUILayout.Window(1, windowPos, WindowGUI, "MechJeb", GUILayout.MinWidth(100));
+
+            switch (main_windowStat) {
+                case WindowStat.OPENING:
+                    main_windowProgr += Time.fixedDeltaTime;
+                    if (main_windowProgr >= 1) {
+                        main_windowProgr = 1;
+                        main_windowStat = WindowStat.NORMAL;
+                    }
+                    break;
+                case WindowStat.CLOSING:
+                    main_windowProgr -= Time.fixedDeltaTime;
+                    if (main_windowProgr <= 0) {
+                        main_windowProgr = 0;
+                        main_windowStat = WindowStat.HIDDEN;
+                    }
+                    break;
+            }
+
+            GUI.matrix = Matrix4x4.TRS(Vector3.zero, Quaternion.Euler(new Vector3(0, 0, -90)), Vector3.one);
+            if (GUI.Button(new Rect((-Screen.height - 100) / 2, Screen.width - 25 - (200 * main_windowProgr), 100, 25), (main_windowStat == WindowStat.HIDDEN) ? "/\\ MechJeb /\\" : "\\/ MechJeb \\/")) {
+                if (main_windowStat == WindowStat.HIDDEN) {
+                    GUI.BringWindowToFront(0);
+                    main_windowStat = WindowStat.OPENING;
+                    main_windowProgr = 0;
+                } else if (main_windowStat == WindowStat.NORMAL) {
+                    main_windowStat = WindowStat.CLOSING;
+                    main_windowProgr = 1;
+                }
+            }
+            GUI.matrix = Matrix4x4.identity;
+
+            if (main_windowStat != WindowStat.HIDDEN) {
+                GUILayout.Window(0, new Rect(Screen.width - main_windowProgr * 200, (Screen.height - 200)/2, 200, 200), main_WindowGUI, "MechJeb", GUILayout.Width(200), GUILayout.Height(200));
+            }
+
+            if (SASS_windowStat != WindowStat.HIDDEN) {
+                SASS_windowPos = GUILayout.Window(1, SASS_windowPos, SASS_WindowGUI, "Smart A. S. S.", GUILayout.Width(130));
+            }
+
+            if (orbital_windowStat != WindowStat.HIDDEN) {
+                orbital_windowPos = GUILayout.Window(2, orbital_windowPos, orbital_WindowGUI, "Orbital Information", GUILayout.Width(200));
+            }
+
+            if (surface_windowStat != WindowStat.HIDDEN) {
+                surface_windowPos = GUILayout.Window(3, surface_windowPos, surface_WindowGUI, "Surface Information", GUILayout.Width(200));
+            }
         }
     }
 
     protected override void onPartStart() {
         stackIcon.SetIcon(DefaultIcons.ADV_SAS);
-        if ((windowPos.x == 0) && (windowPos.y == 0)) {
-            windowPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
-        }
 
         brain = (GameObject)GameObject.Instantiate(Resources.Load("Effects/fx_exhaustFlame_blue"));
         brain.name = "brain_FX";
@@ -301,12 +609,21 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onFlightStart() {
+        loadSettings();
+        if ((SASS_windowPos.x == 0) && (SASS_windowPos.y == 0)) SASS_windowPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
+        if ((orbital_windowPos.x == 0) && (orbital_windowPos.y == 0)) orbital_windowPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
+        if ((surface_windowPos.x == 0) && (surface_windowPos.y == 0)) surface_windowPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
+
         RenderingManager.AddToPostDrawQueue(3, new Callback(drawGUI));
         FlightInputHandler.OnFlyByWire += new FlightInputHandler.FlightInputCallback(drive);
         flyByWire = true;
     }
 
     protected override void onPartFixedUpdate() {
+        if (settingsChanged) {
+            saveSettings();
+        }
+
         doorStress -= doorStress * ((doorStat == DoorStat.OPEN) ? doorStressReliefOpen : doorStressReliefClosed) * TimeWarp.fixedDeltaTime;
 
         if (doorStress < doorStressMin) {
@@ -361,18 +678,16 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onPartUpdate() {
-        resetTime += Time.deltaTime;
-        if ((resetTime >= 5) || mode_changed || InputLockManager.IsLocked(ControlTypes.PITCH)) {
+        if (mode_changed || InputLockManager.IsLocked(ControlTypes.PITCH)) {
             integral = Vector3.zero;
             prev_err = Vector3.zero;
             act = Vector3.zero;
             k_integral = Vector3.zero;
             k_prev_err = Vector3.zero;
-            resetTime = 0;
         }
         if (mode_changed) {
             srf_act = false;
-            windowPos.width = windowPos.height = 10;
+            SASS_windowPos = new Rect(SASS_windowPos.x, SASS_windowPos.y, 10, 10);
 
             mode_changed = false;
         }
