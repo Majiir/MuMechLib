@@ -51,6 +51,7 @@ class MuMechJeb : MuMechPart {
     private static bool calibrationMode = false;
     public static SettingsManager settings = null;
     public bool settingsChanged = false;
+    public bool gamePaused = false;
 
     // SAS
     private bool flyByWire = false;
@@ -533,7 +534,7 @@ class MuMechJeb : MuMechPart {
     }
 
     private void drawGUI() {
-        if (vessel == FlightGlobals.ActiveVessel) {
+        if ((vessel == FlightGlobals.ActiveVessel) && !gamePaused) {
             GUI.skin = HighLogic.Skin;
 
             switch (main_windowStat) {
@@ -776,5 +777,15 @@ class MuMechJeb : MuMechPart {
             flyByWire = false;
         }
         RenderingManager.RemoveFromPostDrawQueue(3, new Callback(drawGUI));
+    }
+
+    protected override void onGamePause() {
+        gamePaused = true;
+        base.onGamePause();
+    }
+
+    protected override void onGameResume() {
+        gamePaused = false;
+        base.onGameResume();
     }
 }
