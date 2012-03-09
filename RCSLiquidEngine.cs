@@ -52,7 +52,7 @@ class MuMechRCSLiquidEngine : LiquidEngine {
         foreach (KeyValuePair<string, bool> grp in tmpGrp) {
             vessels[vessel].groups[grp.Key] = GUILayout.Toggle(grp.Value, grp.Key);
         }
-
+        
         GUILayout.EndVertical();
     }
 
@@ -64,7 +64,7 @@ class MuMechRCSLiquidEngine : LiquidEngine {
 
             GUI.skin = HighLogic.Skin;
 
-            winPos = GUILayout.Window(0, winPos, WindowGUI, "Engine control", GUILayout.MinWidth(150));
+            winPos = GUILayout.Window(12345, winPos, WindowGUI, "Engine control", GUILayout.MinWidth(150));
         }
     }
 
