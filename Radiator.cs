@@ -9,7 +9,6 @@ class MuMechRadiator : Part {
     protected override void onPartStart() {
         stackIcon.SetIcon(DefaultIcons.STRUT);
         stackIconGrouping = StackIconGrouping.SAME_MODULE;
-        fuelCrossFeed = true;
     }
 
     protected override void onPartFixedUpdate() {

@@ -68,6 +68,8 @@ class MuMechJeb : MuMechPart {
         }
     }
 
+    public static Dictionary<Vessel, List<MuMechJeb>> allJebs = new Dictionary<Vessel,List<MuMechJeb>>();
+
     private static bool calibrationMode = true;
     private static int windowIDbase = 60606;
     private int calibrationTarget = 0;
@@ -313,8 +315,15 @@ class MuMechJeb : MuMechPart {
         base.onFlightStateLoad(parsedData);
     }
 
+    private void onFlyByWire(FlightCtrlState s) {
+        if ((vessel != FlightGlobals.ActiveVessel) || (allJebs[vessel][0] != this)) {
+            return;
+        }
+        drive(s);
+    }
+
     private void drive(FlightCtrlState s) {
-        if (!isControllable || (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) {
+        if ((state == PartStates.DEAD) || (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) {
             return;
         }
         if ((mode != Mode.OFF) && (mode != Mode.STANDBY)) {
@@ -402,33 +411,33 @@ class MuMechJeb : MuMechPart {
                     doorStress += (Mathf.Min(Mathf.Abs(act.z), 1.0F) + Mathf.Min(Mathf.Abs(act.x), 1.0F)) * TimeWarp.fixedDeltaTime;
                 }
             }
+        }
 
-            if (tmode != TMode.OFF) {
-                double spd = 0;
+        if (tmode != TMode.OFF) {
+            double spd = 0;
 
-                Vector3 CoM = vessel.findWorldCenterOfMass();
+            Vector3 CoM = vessel.findWorldCenterOfMass();
 
-                switch (tmode) {
-                    case TMode.KEEP_ORBITAL:
-                        spd = vessel.orbit.GetRelativeVel().magnitude;
-                        break;
-                    case TMode.KEEP_SURFACE:
-                        spd = (vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM)).magnitude;
-                        break;
-                    case TMode.KEEP_VERTICAL:
-                        Vector3d up = (CoM - vessel.mainBody.position).normalized;
-                        spd = Vector3d.Dot(vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM), up);
-                        break;
-                }
-
-                double t_err = trans_spd_act - spd;
-                t_integral += t_err * TimeWarp.fixedDeltaTime;
-                double t_deriv = (t_err - t_prev_err) / TimeWarp.fixedDeltaTime;
-                double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
-                t_prev_err = t_err;
-
-                s.mainThrottle = Mathf.Clamp(s.mainThrottle + (float)t_act, 0, 1.0F);
+            switch (tmode) {
+                case TMode.KEEP_ORBITAL:
+                    spd = vessel.orbit.GetRelativeVel().magnitude;
+                    break;
+                case TMode.KEEP_SURFACE:
+                    spd = (vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM)).magnitude;
+                    break;
+                case TMode.KEEP_VERTICAL:
+                    Vector3d up = (CoM - vessel.mainBody.position).normalized;
+                    spd = Vector3d.Dot(vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM), up);
+                    break;
             }
+
+            double t_err = trans_spd_act - spd;
+            t_integral += t_err * TimeWarp.fixedDeltaTime;
+            double t_deriv = (t_err - t_prev_err) / TimeWarp.fixedDeltaTime;
+            double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
+            t_prev_err = t_err;
+
+            s.mainThrottle = Mathf.Clamp(s.mainThrottle + (float)t_act, 0, 1.0F);
         }
     }
 
@@ -730,7 +739,7 @@ class MuMechJeb : MuMechPart {
     }
 
     private void drawGUI() {
-        if ((vessel == FlightGlobals.ActiveVessel) && !gamePaused) {
+        if ((state != PartStates.DEAD) && (vessel == FlightGlobals.ActiveVessel) && (allJebs[vessel][0] == this) && !gamePaused) {
             GUI.skin = HighLogic.Skin;
 
             switch (main_windowStat) {
@@ -806,8 +815,13 @@ class MuMechJeb : MuMechPart {
         brain = (GameObject)GameObject.Instantiate(Resources.Load("Effects/fx_exhaustFlame_blue"));
         brain.name = "brain_FX";
         brain.transform.parent = transform.Find("model");
-        brain.transform.localPosition = new Vector3(0, 0.2F, 0);
-        brain.transform.localRotation = Quaternion.identity;
+        if (transform.Find("model/base/Door03") == null) {
+            brain.transform.localPosition = new Vector3(0, 0.05F, -0.2F);
+            brain.transform.localRotation = Quaternion.FromToRotation(Vector3.up, Vector3.forward);
+        } else {
+            brain.transform.localPosition = new Vector3(0, 0.2F, 0);
+            brain.transform.localRotation = Quaternion.identity;
+        }
 
         brain.AddComponent<Light>();
         brain.light.color = XKCDColors.ElectricBlue;
@@ -834,13 +848,35 @@ class MuMechJeb : MuMechPart {
         RenderingManager.AddToPostDrawQueue(0, new Callback(drawGUI));
         firstDraw = true;
 
-        FlightInputHandler.OnFlyByWire += new FlightInputHandler.FlightInputCallback(drive);
+        FlightInputHandler.OnFlyByWire += new FlightInputHandler.FlightInputCallback(onFlyByWire);
         flyByWire = true;
     }
 
     protected override void onPartFixedUpdate() {
         if (settingsChanged) {
             saveSettings();
+        }
+
+        if (!allJebs.ContainsKey(vessel)) {
+            allJebs[vessel] = new List<MuMechJeb>();
+        }
+        if (!allJebs[vessel].Contains(this)) {
+            allJebs[vessel].Add(this);
+        }
+
+        if (vessel.orbit.objectType != Orbit.ObjectType.VESSEL) {
+            vessel.orbit.objectType = Orbit.ObjectType.VESSEL;
+        }
+        if (!isConnected) {
+            foreach (Part p in vessel.parts) {
+                p.isConnected = true;
+            }
+        }
+
+        if ((vessel != FlightGlobals.ActiveVessel) && (allJebs[vessel][0] == this)) {
+            FlightCtrlState s = new FlightCtrlState();
+            drive(s);
+            vessel.FeedInputFeed(s);
         }
 
         base.onPartFixedUpdate();
@@ -889,10 +925,15 @@ class MuMechJeb : MuMechPart {
             float oldProgr = doorProgr;
             doorProgr = Mathf.Clamp(doorProgr + doorSpeed * TimeWarp.fixedDeltaTime, 0, 1.0F);
 
-            transform.Find("model/base/Door01").RotateAroundLocal(Vector3.left, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
-            transform.Find("model/base/Door02").RotateAroundLocal(Vector3.back, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
-            transform.Find("model/base/Door03").RotateAroundLocal(Vector3.right, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
-            transform.Find("model/base/Door04").RotateAroundLocal(Vector3.forward, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
+            if (transform.Find("model/base/Door03") == null) {
+                transform.Find("model/base/Door01").RotateAroundLocal(new Vector3(0.590526F, 0.807018F, 0.0F), 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
+                transform.Find("model/base/Door02").RotateAroundLocal(new Vector3(0.566785F, -0.823866F, 0.0F), 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
+            } else {
+                transform.Find("model/base/Door01").RotateAroundLocal(Vector3.left, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
+                transform.Find("model/base/Door02").RotateAroundLocal(Vector3.back, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
+                transform.Find("model/base/Door03").RotateAroundLocal(Vector3.right, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
+                transform.Find("model/base/Door04").RotateAroundLocal(Vector3.forward, 2.5F * (doorProgr - oldProgr) * ((doorStat == DoorStat.OPENING) ? 1.0F : -1.0F));
+            }
 
             if (doorProgr >= 1.0F) {
                 doorStat = (doorStat == DoorStat.OPENING) ? DoorStat.OPEN : DoorStat.CLOSED;
@@ -1071,15 +1112,19 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onDisconnect() {
+        allJebs[vessel].Remove(this);
+
         if (flyByWire) {
-            FlightInputHandler.OnFlyByWire -= new FlightInputHandler.FlightInputCallback(drive);
+            FlightInputHandler.OnFlyByWire -= new FlightInputHandler.FlightInputCallback(onFlyByWire);
             flyByWire = false;
         }
     }
 
     protected override void onPartDestroy() {
+        allJebs[vessel].Remove(this);
+
         if (flyByWire) {
-            FlightInputHandler.OnFlyByWire -= new FlightInputHandler.FlightInputCallback(drive);
+            FlightInputHandler.OnFlyByWire -= new FlightInputHandler.FlightInputCallback(onFlyByWire);
             flyByWire = false;
         }
         RenderingManager.RemoveFromPostDrawQueue(0, new Callback(drawGUI));
