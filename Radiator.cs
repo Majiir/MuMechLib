@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 
-class MuMechRadiator : Part {
+class MuMechRadiator : MuMechToggle {
     private VInfoBox tempIndicator;
 
     protected override void onPartStart() {
