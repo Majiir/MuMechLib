@@ -32,12 +32,15 @@ class MuMechVariableEngine : LiquidEngine {
     }
 
     protected override void onActiveUpdate() {
-        if (!vessels.ContainsKey(vessel)) {
+        if ((vessel != null) && !vessels.ContainsKey(vessel)) {
             vessels[vessel] = new MuMechVariableEngineGroup();
         }
         if (vessels[vessel].controller == null) {
             vessels[vessel].controller = this;
             RenderingManager.AddToPostDrawQueue(3, new Callback(drawGUI));
+        }
+        if (!vessels[vessel].groups.ContainsKey(group)) {
+            vessels[vessel].groups[group] = start;
         }
 
         base.onActiveUpdate();
@@ -149,8 +152,6 @@ class MuMechVariableEngine : LiquidEngine {
     }
 
     private void WindowGUI(int windowID) {
-        GUI.DragWindow(new Rect(0, 0, 10000, 25));
-
         GUILayout.BeginVertical();
 
         Dictionary<string, bool> tmpGrp = new Dictionary<string, bool>(vessels[vessel].groups);
@@ -160,17 +161,19 @@ class MuMechVariableEngine : LiquidEngine {
         }
 
         GUILayout.EndVertical();
+
+        GUI.DragWindow();
     }
 
     private void drawGUI() {
-        if ((state == PartStates.ACTIVE) && isControllable && InputLockManager.IsUnlocked(ControlTypes.THROTTLE) && !gamePaused) {
+        if ((vessel == FlightGlobals.ActiveVessel) && (vessels[vessel].controller == this) && (state == PartStates.ACTIVE) && isControllable && InputLockManager.IsUnlocked(ControlTypes.THROTTLE) && !gamePaused) {
             if (winPos.x == 0 && winPos.y == 0) {
                 winPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
             }
 
             GUI.skin = HighLogic.Skin;
 
-            winPos = GUILayout.Window(12345, winPos, WindowGUI, "Engine control", GUILayout.MinWidth(150));
+            winPos = GUILayout.Window(123, winPos, WindowGUI, "Engine control", GUILayout.MinWidth(150));
         }
     }
 
@@ -178,8 +181,17 @@ class MuMechVariableEngine : LiquidEngine {
         base.onPartUpdate();
     }
 
+    protected override void onPartDeactivate() {
+        if ((vessel != null) && vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
+            vessels[vessel].controller = null;
+            RenderingManager.RemoveFromPostDrawQueue(3, new Callback(drawGUI));
+        }
+
+        base.onPartDeactivate();
+    }
+
     protected override void onDisconnect() {
-        if (vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
+        if ((vessel != null) && vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
             vessels[vessel].controller = null;
             RenderingManager.RemoveFromPostDrawQueue(3, new Callback(drawGUI));
         }
@@ -188,7 +200,7 @@ class MuMechVariableEngine : LiquidEngine {
     }
 
     protected override void onPartDestroy() {
-        if (vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
+        if ((vessel != null) && vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
             vessels[vessel].controller = null;
             RenderingManager.RemoveFromPostDrawQueue(3, new Callback(drawGUI));
         }
@@ -209,6 +221,8 @@ class MuMechVariableEngine : LiquidEngine {
         }
 
         base.onFlightStart();
+
+        fuelSource = this;
     }
 
     protected override void onGamePause() {

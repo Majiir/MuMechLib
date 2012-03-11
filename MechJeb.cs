@@ -857,20 +857,37 @@ class MuMechJeb : MuMechPart {
             saveSettings();
         }
 
-        if (!allJebs.ContainsKey(vessel)) {
-            allJebs[vessel] = new List<MuMechJeb>();
-        }
-        if (!allJebs[vessel].Contains(this)) {
-            allJebs[vessel].Add(this);
+        if (((vessel.rootPart is Decoupler) || (vessel.rootPart is RadialDecoupler)) && vessel.rootPart.gameObject.layer != 2) {
+            print("Disabling collision with decoupler...");
+            EditorLogic.setPartLayer(vessel.rootPart.gameObject, 2);
         }
 
         if (vessel.orbit.objectType != Orbit.ObjectType.VESSEL) {
             vessel.orbit.objectType = Orbit.ObjectType.VESSEL;
         }
         if (!isConnected) {
-            foreach (Part p in vessel.parts) {
-                p.isConnected = true;
+            List<Part> tmp = new List<Part>(vessel.parts);
+            foreach (Part p in tmp) {
+                if ((p is Decoupler) || (p is RadialDecoupler)) {
+                    print("Disabling collision with decoupler...");
+                    EditorLogic.setPartLayer(p.gameObject, 2);
+                }
             }
+
+            tmp = new List<Part>(vessel.parts);
+            foreach (Part p in tmp) {
+                p.isConnected = true;
+                if (p.State == PartStates.IDLE) {
+                    p.force_activate();
+                }
+            }
+        }
+
+        if (!allJebs.ContainsKey(vessel)) {
+            allJebs[vessel] = new List<MuMechJeb>();
+        }
+        if (!allJebs[vessel].Contains(this)) {
+            allJebs[vessel].Add(this);
         }
 
         if ((vessel != FlightGlobals.ActiveVessel) && (allJebs[vessel][0] == this)) {
@@ -942,6 +959,13 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onPartUpdate() {
+        if (!allJebs.ContainsKey(vessel)) {
+            allJebs[vessel] = new List<MuMechJeb>();
+        }
+        if (!allJebs[vessel].Contains(this)) {
+            allJebs[vessel].Add(this);
+        }
+
         if ((integral.magnitude > 10) || (prev_err.magnitude > 10) || mode_changed) {
             integral = Vector3.zero;
             prev_err = Vector3.zero;
@@ -1112,7 +1136,9 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onDisconnect() {
-        allJebs[vessel].Remove(this);
+        if ((vessel != null) && allJebs.ContainsKey(vessel) && allJebs[vessel].Contains(this)) {
+            allJebs[vessel].Remove(this);
+        }
 
         if (flyByWire) {
             FlightInputHandler.OnFlyByWire -= new FlightInputHandler.FlightInputCallback(onFlyByWire);
@@ -1121,7 +1147,9 @@ class MuMechJeb : MuMechPart {
     }
 
     protected override void onPartDestroy() {
-        allJebs[vessel].Remove(this);
+        if ((vessel != null) && allJebs.ContainsKey(vessel) && allJebs[vessel].Contains(this)) {
+            allJebs[vessel].Remove(this);
+        }
 
         if (flyByWire) {
             FlightInputHandler.OnFlyByWire -= new FlightInputHandler.FlightInputCallback(onFlyByWire);
