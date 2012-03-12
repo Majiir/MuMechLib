@@ -17,7 +17,8 @@ class MuMechJeb : MuMechPart {
         NORMAL_MINUS,
         RADIAL_PLUS,
         RADIAL_MINUS,
-        STANDBY
+        STANDBY,
+        INTERNAL
 	}
 
     public enum TMode {
@@ -42,6 +43,7 @@ class MuMechJeb : MuMechPart {
         CLOSING
     }
 
+    private Mode prev_mode = Mode.OFF;
     private Mode _mode = Mode.OFF;
     public Mode mode {
         get {
@@ -49,12 +51,14 @@ class MuMechJeb : MuMechPart {
         }
         set {
             if (_mode != value) {
+                prev_mode = _mode;
                 _mode = value;
                 mode_changed = true;
             }
         }
     }
 
+    private TMode prev_tmode = TMode.OFF;
     private TMode _tmode = TMode.OFF;
     public TMode tmode {
         get {
@@ -62,6 +66,7 @@ class MuMechJeb : MuMechPart {
         }
         set {
             if (_tmode != value) {
+                prev_tmode = _tmode;
                 _tmode = value;
                 tmode_changed = true;
             }
@@ -70,7 +75,7 @@ class MuMechJeb : MuMechPart {
 
     public static Dictionary<Vessel, List<MuMechJeb>> allJebs = new Dictionary<Vessel,List<MuMechJeb>>();
 
-    private static bool calibrationMode = true;
+    private static bool calibrationMode = false;
     private static int windowIDbase = 60606;
     private int calibrationTarget = 0;
     private double[] calibrationDeltas = {0.01, 0.05, 0.25, 1, 5};
@@ -99,19 +104,24 @@ class MuMechJeb : MuMechPart {
     public float k_Kp = 13.0F;
     public float k_Ki = 0.0F;
     public float k_Kd = 0.0F;
-    public float t_Kp = 1.0F;
-    public float t_Ki = 0.0F;
-    public float t_Kd = 0.0F;
+    public float t_Kp = 50.0F;
+    public float t_Ki = 0.01F;
+    public float t_Kd = 10.0F;
     public float Damping = 0.0F;
 
     public string srf_hdg = "90";
-    public string srf_pth = "90";
+    public string srf_pit = "90";
     public float srf_act_hdg = 90.0F;
-    public float srf_act_pth = 90.0F;
+    public float srf_act_pit = 90.0F;
     public bool srf_act = false;
 
     public string trans_spd = "0";
     public float trans_spd_act = 0;
+    public float trans_prev_thrust = 0;
+    public bool trans_kill_h = false;
+    public bool trans_land = false;
+
+    public Quaternion internal_target = Quaternion.identity;
 
     // Main window
     private WindowStat _main_windowStat;
@@ -290,11 +300,13 @@ class MuMechJeb : MuMechPart {
         partDataCollection.Add("tmode", new KSPParseable((int)tmode, KSPParseable.Type.INT));
         partDataCollection.Add("srf_act", new KSPParseable(srf_act, KSPParseable.Type.BOOL));
         partDataCollection.Add("srf_act_hdg", new KSPParseable(srf_act_hdg, KSPParseable.Type.FLOAT));
-        partDataCollection.Add("srf_act_pth", new KSPParseable(srf_act_pth, KSPParseable.Type.FLOAT));
+        partDataCollection.Add("srf_act_pit", new KSPParseable(srf_act_pit, KSPParseable.Type.FLOAT));
         partDataCollection.Add("srf_hdg", new KSPParseable(srf_hdg, KSPParseable.Type.STRING));
-        partDataCollection.Add("srf_pth", new KSPParseable(srf_pth, KSPParseable.Type.STRING));
+        partDataCollection.Add("srf_pit", new KSPParseable(srf_pit, KSPParseable.Type.STRING));
         partDataCollection.Add("trans_spd", new KSPParseable(trans_spd, KSPParseable.Type.STRING));
         partDataCollection.Add("trans_spd_act", new KSPParseable(trans_spd_act, KSPParseable.Type.FLOAT));
+        partDataCollection.Add("trans_kill_h", new KSPParseable(trans_kill_h, KSPParseable.Type.BOOL));
+        partDataCollection.Add("trans_land", new KSPParseable(trans_land, KSPParseable.Type.BOOL));
 
         base.onFlightStateSave(partDataCollection);
     }
@@ -306,11 +318,13 @@ class MuMechJeb : MuMechPart {
         if (parsedData.ContainsKey("tmode")) tmode = (TMode)parsedData["tmode"].value_int;
         if (parsedData.ContainsKey("srf_act")) srf_act = parsedData["srf_act"].value_bool;
         if (parsedData.ContainsKey("srf_act_hdg")) srf_act_hdg = parsedData["srf_act_hdg"].value_float;
-        if (parsedData.ContainsKey("srf_act_pth")) srf_act_pth = parsedData["srf_act_pth"].value_float;
+        if (parsedData.ContainsKey("srf_act_pit")) srf_act_pit = parsedData["srf_act_pit"].value_float;
         if (parsedData.ContainsKey("srf_hdg")) srf_hdg = parsedData["srf_hdg"].value;
-        if (parsedData.ContainsKey("srf_pth")) srf_pth = parsedData["srf_pth"].value;
+        if (parsedData.ContainsKey("srf_pit")) srf_pit = parsedData["srf_pit"].value;
         if (parsedData.ContainsKey("trans_spd")) trans_spd = parsedData["trans_spd"].value;
         if (parsedData.ContainsKey("trans_spd_act")) trans_spd_act = parsedData["trans_spd_act"].value_float;
+        if (parsedData.ContainsKey("trans_kill_h")) trans_kill_h = parsedData["trans_kill_h"].value_bool;
+        if (parsedData.ContainsKey("trans_land")) trans_land = parsedData["trans_land"].value_bool;
 
         base.onFlightStateLoad(parsedData);
     }
@@ -326,6 +340,71 @@ class MuMechJeb : MuMechPart {
         if ((state == PartStates.DEAD) || (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) {
             return;
         }
+
+        if (tmode != TMode.OFF) {
+            double spd = 0;
+            bool fullBlast = false;
+
+            Vector3 CoM = vessel.findWorldCenterOfMass();
+            Vector3d up = (CoM - vessel.mainBody.position).normalized;
+
+            if (trans_land) {
+                if (vessel.Landed || vessel.Splashed) {
+                    tmode = TMode.OFF;
+                    trans_land = false;
+                } else {
+                    tmode = TMode.KEEP_VERTICAL;
+                    trans_kill_h = true;
+                    float alt = (float)vessel.mainBody.GetAltitude(CoM);
+                    RaycastHit sfc;
+                    Physics.Raycast(CoM, -up, out sfc, alt + 1000.0F, 1 << 15);
+                    alt = Math.Min(alt, sfc.distance);
+
+                    trans_spd_act = Mathf.Lerp(0, -1000 * (float)vessel.mainBody.GeeASL, Mathf.Clamp01(alt / (10000 * (float)vessel.mainBody.GeeASL)));
+                    trans_spd = Mathf.Round(trans_spd_act).ToString();
+                }
+            }
+
+            switch (tmode) {
+                case TMode.KEEP_ORBITAL:
+                    spd = vessel.orbit.GetRelativeVel().magnitude;
+                    break;
+                case TMode.KEEP_SURFACE:
+                    spd = (vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM)).magnitude;
+                    break;
+                case TMode.KEEP_VERTICAL:
+                    spd = Vector3d.Dot(vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM), up);
+                    mode = Mode.INTERNAL;
+                    if (trans_kill_h) {
+                        Vector3 hsdir = Vector3.Exclude(up, vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM));
+                        Vector3 dir = -hsdir + up * Math.Max(Math.Abs(spd), 100*vessel.mainBody.GeeASL);
+                        if (hsdir.magnitude > Math.Max(Math.Abs(spd), 100 * vessel.mainBody.GeeASL) * 2) {
+                            fullBlast = true;
+                            internal_target = Quaternion.LookRotation(-hsdir, -vessel.transform.forward);
+                        } else {
+                            internal_target = Quaternion.LookRotation(dir.normalized, vessel.mainBody.transform.up);
+                        }
+                    } else {
+                        internal_target = Quaternion.LookRotation(up, vessel.mainBody.transform.up);
+                    }
+                    break;
+            }
+
+            double t_err = (trans_spd_act - spd) / 1000.0F;
+            t_integral += t_err * TimeWarp.fixedDeltaTime;
+            double t_deriv = (t_err - t_prev_err) / TimeWarp.fixedDeltaTime;
+            double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
+            t_prev_err = t_err;
+
+            if ((tmode != TMode.KEEP_VERTICAL) || (Mathf.Abs(Quaternion.Angle(internal_target, vessel.transform.rotation) - 90) < 2)) {
+                if (fullBlast) {
+                    trans_prev_thrust = s.mainThrottle = 1;
+                } else {
+                    trans_prev_thrust = s.mainThrottle = Mathf.Clamp(trans_prev_thrust + (float)t_act, 0, 1.0F);
+                }
+            }
+        }
+
         if ((mode != Mode.OFF) && (mode != Mode.STANDBY)) {
             Vector3 MOI = vessel.findLocalMOI(vessel.findWorldCenterOfMass());
 
@@ -357,10 +436,10 @@ class MuMechJeb : MuMechPart {
 
                 switch (mode) {
                     case Mode.SURFACE:
-                        Quaternion r = Quaternion.LookRotation(up, vessel.mainBody.transform.up) * Quaternion.AngleAxis(srf_act_hdg + 180.0F, Vector3.forward) * Quaternion.AngleAxis(90.0F - srf_act_pth, Vector3.right);
+                        Quaternion r = Quaternion.LookRotation(up, vessel.mainBody.transform.up) * Quaternion.AngleAxis(srf_act_hdg + 180.0F, Vector3.forward) * Quaternion.AngleAxis(90.0F - srf_act_pit, Vector3.right);
                         
                         tgt_fwd = r * Vector3.forward;
-                        if (srf_act_pth == 90.0F) {
+                        if (srf_act_pit == 90.0F) {
                             tgt_up = -vessel.transform.forward;
                         }
                         break;
@@ -387,6 +466,9 @@ class MuMechJeb : MuMechPart {
                 }
 
                 Quaternion tgt = Quaternion.LookRotation(tgt_fwd, tgt_up);
+                if (mode == Mode.INTERNAL) {
+                    tgt = internal_target;
+                }
                 Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(vessel.transform.rotation) * tgt);
 
                 err = new Vector3((delta.eulerAngles.x > 180) ? (delta.eulerAngles.x - 360.0F) : delta.eulerAngles.x, (delta.eulerAngles.y > 180) ? (delta.eulerAngles.y - 360.0F) : delta.eulerAngles.y, (delta.eulerAngles.z > 180) ? (delta.eulerAngles.z - 360.0F) : delta.eulerAngles.z) / 180.0F;
@@ -411,33 +493,6 @@ class MuMechJeb : MuMechPart {
                     doorStress += (Mathf.Min(Mathf.Abs(act.z), 1.0F) + Mathf.Min(Mathf.Abs(act.x), 1.0F)) * TimeWarp.fixedDeltaTime;
                 }
             }
-        }
-
-        if (tmode != TMode.OFF) {
-            double spd = 0;
-
-            Vector3 CoM = vessel.findWorldCenterOfMass();
-
-            switch (tmode) {
-                case TMode.KEEP_ORBITAL:
-                    spd = vessel.orbit.GetRelativeVel().magnitude;
-                    break;
-                case TMode.KEEP_SURFACE:
-                    spd = (vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM)).magnitude;
-                    break;
-                case TMode.KEEP_VERTICAL:
-                    Vector3d up = (CoM - vessel.mainBody.position).normalized;
-                    spd = Vector3d.Dot(vessel.orbit.GetVel() - vessel.mainBody.getRFrmVel(CoM), up);
-                    break;
-            }
-
-            double t_err = trans_spd_act - spd;
-            t_integral += t_err * TimeWarp.fixedDeltaTime;
-            double t_deriv = (t_err - t_prev_err) / TimeWarp.fixedDeltaTime;
-            double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
-            t_prev_err = t_err;
-
-            s.mainThrottle = Mathf.Clamp(s.mainThrottle + (float)t_act, 0, 1.0F);
         }
     }
 
@@ -480,6 +535,10 @@ class MuMechJeb : MuMechPart {
             if (GUILayout.Button("ON", sty, GUILayout.ExpandWidth(true))) {
                 mode = Mode.STANDBY;
             }
+        } else if (mode == Mode.INTERNAL) {
+            sty.normal.textColor = Color.red;
+            sty.onActive = sty.onFocused = sty.onHover = sty.onNormal = sty.active = sty.focused = sty.hover = sty.normal;
+            GUILayout.Button("AUTO", sty, GUILayout.ExpandWidth(true));
         } else {
             if (GUILayout.Button("OFF", sty, GUILayout.ExpandWidth(true))) {
                 mode = Mode.OFF;
@@ -517,40 +576,40 @@ class MuMechJeb : MuMechPart {
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
-                GUILayout.Label("PTH", GUILayout.Width(30));
-                srf_pth = GUILayout.TextField(srf_pth, GUILayout.ExpandWidth(true));
-                srf_pth = Regex.Replace(srf_pth, @"[^\d+-]", "");
+                GUILayout.Label("PIT", GUILayout.Width(30));
+                srf_pit = GUILayout.TextField(srf_pit, GUILayout.ExpandWidth(true));
+                srf_pit = Regex.Replace(srf_pit, @"[^\d+-]", "");
                 if (GUILayout.Button("+", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
-                    float tmp = Convert.ToInt16(srf_pth);
+                    float tmp = Convert.ToInt16(srf_pit);
                     tmp += 1;
                     if (tmp >= 360.0F) {
                         tmp -= 360.0F;
                     }
-                    srf_pth = Mathf.RoundToInt(tmp).ToString();
+                    srf_pit = Mathf.RoundToInt(tmp).ToString();
                     GUIUtility.keyboardControl = 0;
                 }
                 if (GUILayout.Button("-", msty, GUILayout.Width(18.0F), GUILayout.Height(18.0F))) {
-                    float tmp = Convert.ToInt16(srf_pth);
+                    float tmp = Convert.ToInt16(srf_pit);
                     tmp -= 1;
                     if (tmp < 0) {
                         tmp += 360.0F;
                     }
-                    srf_pth = Mathf.RoundToInt(tmp).ToString();
+                    srf_pit = Mathf.RoundToInt(tmp).ToString();
                     GUIUtility.keyboardControl = 0;
                 }
                 GUILayout.EndHorizontal();
 
                 if (GUILayout.Button("EXECUTE", sty, GUILayout.ExpandWidth(true))) {
                     srf_act_hdg = Convert.ToInt16(srf_hdg);
-                    srf_act_pth = Convert.ToInt16(srf_pth);
+                    srf_act_pit = Convert.ToInt16(srf_pit);
                     srf_act = true;
-                    print("MechJeb activating SURF mode. HDG = " + srf_act_hdg + " - PTH = " + srf_act_pth);
+                    print("MechJeb activating SURF mode. HDG = " + srf_act_hdg + " - PIT = " + srf_act_pit);
                     GUIUtility.keyboardControl = 0;
                 }
 
                 if (srf_act) {
                     GUILayout.Label("Active HDG: " + srf_act_hdg, GUILayout.ExpandWidth(true));
-                    GUILayout.Label("Active PTH: " + srf_act_pth, GUILayout.ExpandWidth(true));
+                    GUILayout.Label("Active PIT: " + srf_act_pit, GUILayout.ExpandWidth(true));
                 }
             }
         }
@@ -718,6 +777,8 @@ class MuMechJeb : MuMechPart {
 
         tmode = (TMode)GUILayout.SelectionGrid((int)tmode, trans_texts, 2, sty);
 
+        trans_kill_h = GUILayout.Toggle(trans_kill_h, "Kill H/S", GUILayout.ExpandWidth(true));
+
         GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
         GUILayout.Label("Speed");
         trans_spd = GUILayout.TextField(trans_spd, GUILayout.ExpandWidth(true));
@@ -730,7 +791,24 @@ class MuMechJeb : MuMechPart {
         }
 
         if (tmode != TMode.OFF) {
-            GUILayout.Label("Active speed: " + trans_spd_act, GUILayout.ExpandWidth(true));
+            GUILayout.Label("Active speed: " + MuMech.MuUtils.ToSI(trans_spd_act) + "m/s", GUILayout.ExpandWidth(true));
+        }
+
+        GUILayout.FlexibleSpace();
+
+        GUIStyle tsty = new GUIStyle(GUI.skin.label);
+        tsty.alignment = TextAnchor.UpperCenter;
+        GUILayout.Label("Automation", tsty, GUILayout.ExpandWidth(true));
+
+        if (trans_land) {
+            sty.normal.textColor = sty.focused.textColor = sty.hover.textColor = sty.active.textColor = sty.onNormal.textColor = sty.onFocused.textColor = sty.onHover.textColor = sty.onActive.textColor = Color.green;
+        }
+
+        if (GUILayout.Button("LAND", sty, GUILayout.ExpandWidth(true))) {
+            trans_land = !trans_land;
+            if (trans_land) {
+                tmode = TMode.KEEP_VERTICAL;
+            }
         }
 
         GUILayout.EndVertical();
@@ -966,6 +1044,20 @@ class MuMechJeb : MuMechPart {
             allJebs[vessel].Add(this);
         }
 
+        if (tmode_changed) {
+            if ((prev_tmode == TMode.KEEP_VERTICAL) && (mode == Mode.INTERNAL)) {
+                mode = Mode.OFF;
+                trans_land = false;
+            }
+            t_integral = 0;
+            t_prev_err = 0;
+            trans_spd_act = Convert.ToInt16(trans_spd);
+            tmode_changed = false;
+            trans_windowPos = new Rect(trans_windowPos.x, trans_windowPos.y, 10, 10);
+            GUIUtility.keyboardControl = 0;
+            FlightInputHandler.SetNeutralControls();
+        }
+
         if ((integral.magnitude > 10) || (prev_err.magnitude > 10) || mode_changed) {
             integral = Vector3.zero;
             prev_err = Vector3.zero;
@@ -979,15 +1071,6 @@ class MuMechJeb : MuMechPart {
             SASS_windowPos = new Rect(SASS_windowPos.x, SASS_windowPos.y, 10, 10);
 
             mode_changed = false;
-        }
-        if (tmode_changed) {
-            t_integral = 0;
-            t_prev_err = 0;
-            trans_spd_act = Convert.ToInt16(trans_spd);
-            tmode_changed = false;
-            trans_windowPos = new Rect(trans_windowPos.x, trans_windowPos.y, 10, 10);
-            GUIUtility.keyboardControl = 0;
-            FlightInputHandler.SetNeutralControls();
         }
 
         if (calibrationMode) {
