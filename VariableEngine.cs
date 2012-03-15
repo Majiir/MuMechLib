@@ -138,6 +138,10 @@ class MuMechVariableEngine : LiquidEngine {
     }
 
     public override bool RequestFuel(Part source, float amount, uint reqId) {
+        if (source != this) {
+            return false;
+        }
+
         fuelLookupTargets.Clear();
 
         if (!RequestFuelType(fuelType, amount, reqId)) {
@@ -211,10 +215,6 @@ class MuMechVariableEngine : LiquidEngine {
     protected override void onFlightStart() {
         if (!vessels.ContainsKey(vessel)) {
             vessels[vessel] = new MuMechVariableEngineGroup();
-        }
-        if (vessels[vessel].controller == null) {
-            vessels[vessel].controller = this;
-            RenderingManager.AddToPostDrawQueue(3, new Callback(drawGUI));
         }
         if (!vessels[vessel].groups.ContainsKey(group) || start) {
             vessels[vessel].groups[group] = start;

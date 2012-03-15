@@ -38,8 +38,11 @@ class MuMechRCSLiquidEngine : LiquidEngine {
     }
 
     public override bool RequestFuel(Part source, float amount, uint reqId) {
-        fuelLookupTargets.Remove(this);
-        return vessel.rootPart.RequestRCS(amount, 0);
+        if (source == this) {
+            fuelLookupTargets.Remove(this);
+            return vessel.rootPart.RequestRCS(amount, 0);
+        }
+        return false;
     }
 
     private void WindowGUI(int windowID) {
