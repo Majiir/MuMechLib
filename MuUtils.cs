@@ -81,4 +81,48 @@ namespace MuMech {
             }
         }
     }
+
+    class MovingAverage {
+        private double[] store;
+        private int storeSize;
+        private int nextIndex = 0;
+
+        public double value {
+            get {
+                double tmp = 0;
+                foreach (double i in store) {
+                    tmp += i;
+                }
+                return tmp / storeSize;
+            }
+            set {
+                store[nextIndex] = value;
+                nextIndex = (nextIndex + 1) % storeSize;
+            }
+        }
+
+        public MovingAverage(int size = 10, double startingValue = 0) {
+            storeSize = size;
+            store = new double[size];
+            force(startingValue);
+        }
+
+        public void force(double newValue) {
+            for (int i = 0; i < storeSize; i++) {
+                store[i] = newValue;
+            }
+        }
+
+        public static implicit operator double(MovingAverage v) {
+            return v.value;
+        }
+
+        public override string ToString() {
+            return value.ToString();
+        }
+
+        public string ToString(string format) {
+            return value.ToString(format);
+        }
+    }
 }
