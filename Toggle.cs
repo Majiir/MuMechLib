@@ -31,7 +31,7 @@ class MuMechToggle : MuMechPart {
     public string rotateKey = "9";
     public string revRotateKey = "0";
 
-    private bool on = false;
+    protected bool on = false;
 
     public override void onFlightStateSave(Dictionary<string, KSPParseable> partDataCollection) {
         partDataCollection.Add("on", new KSPParseable(on, KSPParseable.Type.BOOL));

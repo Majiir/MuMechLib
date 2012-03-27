@@ -10,9 +10,9 @@ class MuMechVariableTank : MuMechPart {
     public float emptyExplosionPotential = 0;
     public float fullExplosionPotential = 1;
 
-    private float fullMass;
-    private float fullFuel;
-    private VInfoBox fuelBox = null;
+    public float fullMass;
+    public float fullFuel;
+    protected VInfoBox fuelBox = null;
 
     public override void onFlightStateSave(Dictionary<string, KSPParseable> partDataCollection) {
         partDataCollection["fuel"] = new KSPParseable(fuel, KSPParseable.Type.FLOAT);

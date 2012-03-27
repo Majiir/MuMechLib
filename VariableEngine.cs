@@ -9,8 +9,8 @@ class MuMechVariableEngineGroup {
 }
 
 class MuMechVariableEngine : LiquidEngine {
-    public static Dictionary<Vessel, MuMechVariableEngineGroup> vessels = new Dictionary<Vessel, MuMechVariableEngineGroup>();
-    public static Rect winPos;
+    protected static Dictionary<Vessel, MuMechVariableEngineGroup> vessels = new Dictionary<Vessel, MuMechVariableEngineGroup>();
+    protected static Rect winPos;
 
     public string group = "Main engine";
     public bool start = true;
@@ -18,8 +18,70 @@ class MuMechVariableEngine : LiquidEngine {
     public string fuelType = "liquid";
     public string fuelType2 = "";
     public float fuelConsumption2 = 0;
+    public bool liquidSeekAnywhere = false;
 
-    public bool gamePaused = false;
+    public float efficiencyASL = 1;
+    public float efficiencyVacuum = 1;
+
+    public float nozzleExtension = 0;
+    public float nozzleExtensionTime = 5;
+
+    protected bool gamePaused = false;
+    protected float minThrustOrig = 0;
+    protected float maxThrustOrig = 0;
+    protected bool gotThrustOrig = false;
+    protected Vector3 origGimbalPos = Vector3.zero;
+    protected bool gotGimbalOrig = false;
+    protected float nozzleProgress = 0;
+
+    protected override void onPartStart() {
+        gimbal = transform.Find("model/obj_gimbal/nozzle");
+        if (gimbal == null) {
+            gimbal = transform.Find("model/obj_gimbal");
+        }
+        if (gimbal != null) {
+            origGimbalPos = gimbal.localPosition;
+            gotGimbalOrig = true;
+            gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+        }
+
+        base.onPartStart();
+    }
+
+    protected override void onPartAttach(Part parent) {
+        if (gotGimbalOrig) {
+            gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+        } else {
+            gimbal = transform.Find("model/obj_gimbal/nozzle");
+            if (gimbal == null) {
+                gimbal = transform.Find("model/obj_gimbal");
+            }
+            if (gimbal != null) {
+                origGimbalPos = gimbal.localPosition;
+                gotGimbalOrig = true;
+                gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+            }
+        }
+
+        base.onPartAttach(parent);
+    }
+
+    protected override void onPartDetach() {
+        if (gotGimbalOrig) {
+            gimbal.localPosition = origGimbalPos;
+        } else {
+            gimbal = transform.Find("model/obj_gimbal/nozzle");
+            if (gimbal == null) {
+                gimbal = transform.Find("model/obj_gimbal");
+            }
+            if (gimbal != null) {
+                origGimbalPos = gimbal.localPosition;
+                gotGimbalOrig = true;
+            }
+        }
+
+        base.onPartDetach();
+    }
 
     protected override void onActiveFixedUpdate() {
         if (vessels[vessel].groups[group]) {
@@ -28,6 +90,11 @@ class MuMechVariableEngine : LiquidEngine {
             base.onActiveFixedUpdate();
         } else {
             findFxGroup("active").setActive(false);
+        }
+
+        if ((nozzleExtension != 0) && (nozzleProgress < nozzleExtensionTime)) {
+            nozzleProgress += TimeWarp.fixedDeltaTime;
+            gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension * (1 - nozzleProgress / nozzleExtensionTime);
         }
     }
 
@@ -77,34 +144,41 @@ class MuMechVariableEngine : LiquidEngine {
 
             return true;
         } else if (type.ToLowerInvariant() == "liquid") {
-            Dictionary<int, List<FuelTank>> cand = new Dictionary<int, List<FuelTank>>();
-            int maxStage = -1;
+            if (liquidSeekAnywhere) {
+                Dictionary<int, List<FuelTank>> cand = new Dictionary<int, List<FuelTank>>();
+                int maxStage = -1;
 
-            foreach (Part p in vessel.parts) {
-                if (p is FuelTank) {
-                    if ((p.State == PartStates.ACTIVE) || (p.State == PartStates.IDLE)) {
-                        if (!cand.ContainsKey(p.inverseStage)) {
-                            cand[p.inverseStage] = new List<FuelTank>();
-                        }
-                        cand[p.inverseStage].Add((FuelTank)p);
-                        if (p.inverseStage > maxStage) {
-                            maxStage = p.inverseStage;
+                foreach (Part p in vessel.parts) {
+                    if (p is FuelTank) {
+                        if ((p.State == PartStates.ACTIVE) || (p.State == PartStates.IDLE)) {
+                            if (!cand.ContainsKey(p.inverseStage)) {
+                                cand[p.inverseStage] = new List<FuelTank>();
+                            }
+                            cand[p.inverseStage].Add((FuelTank)p);
+                            if (p.inverseStage > maxStage) {
+                                maxStage = p.inverseStage;
+                            }
                         }
                     }
                 }
+
+                if (maxStage == -1) {
+                    return false;
+                }
+
+                float partAmount = amount / cand[maxStage].Count;
+
+                foreach (FuelTank t in cand[maxStage]) {
+                    t.RequestFuel(this, partAmount, reqId);
+                }
+
+                return true;
+            } else {
+                if (!base.RequestFuel(this, amount, reqId) && !base.RequestFuel(this, amount, Part.getFuelReqId())) {
+                    return false;
+                }
+                return true;
             }
-
-            if (maxStage == -1) {
-                return false;
-            }
-
-            float partAmount = amount / cand[maxStage].Count;
-
-            foreach (FuelTank t in cand[maxStage]) {
-                t.RequestFuel(this, partAmount, reqId);
-            }
-
-            return true;
         } else {
             Dictionary<int, List<MuMechVariableTank>> cand = new Dictionary<int, List<MuMechVariableTank>>();
             int maxStage = -1;
@@ -145,10 +219,12 @@ class MuMechVariableEngine : LiquidEngine {
         fuelLookupTargets.Clear();
 
         if (!RequestFuelType(fuelType, amount, reqId)) {
+            state = PartStates.DEAD;
             return false;
         }
 
         if ((fuelConsumption2 > 0) && (fuelType2 != "") && !RequestFuelType(fuelType2, amount * (fuelConsumption2 / fuelConsumption), reqId)) {
+            state = PartStates.DEAD;
             return false;
         }
 
@@ -212,12 +288,49 @@ class MuMechVariableEngine : LiquidEngine {
         base.onPartDestroy();
     }
 
+    protected override void onCtrlUpd(FlightCtrlState ctrlState) {
+        if (!gotThrustOrig) {
+            minThrustOrig = minThrust;
+            maxThrustOrig = maxThrust;
+            gotThrustOrig = true;
+        }
+
+        float maxPress = vessel.mainBody.atmosphere ? (float)FlightGlobals.getStaticPressure(0, vessel.mainBody) : 0;
+        float curPress = vessel.mainBody.atmosphere ? (float)FlightGlobals.getStaticPressure(vessel.mainBody.GetAltitude(vessel.transform.position), vessel.mainBody) : 0;
+
+        float eff = Mathf.Clamp01(Mathf.Lerp(efficiencyVacuum, efficiencyASL, (maxPress > 0) ? (curPress / maxPress) : 0));
+        maxThrust = 0.0001F + maxThrustOrig * eff;
+        minThrust = minThrustOrig * eff;
+
+        base.onCtrlUpd(ctrlState);
+    }
+
     protected override void onFlightStart() {
         if (!vessels.ContainsKey(vessel)) {
             vessels[vessel] = new MuMechVariableEngineGroup();
         }
         if (!vessels[vessel].groups.ContainsKey(group) || start) {
             vessels[vessel].groups[group] = start;
+        }
+
+        if (!gotGimbalOrig) {
+            gimbal = transform.Find("model/obj_gimbal/nozzle");
+            if (gimbal == null) {
+                gimbal = transform.Find("model/obj_gimbal");
+            }
+            if (gimbal != null) {
+                origGimbalPos = gimbal.localPosition;
+                gotGimbalOrig = true;
+            }
+        }
+        if (gotGimbalOrig) {
+            if (state == PartStates.ACTIVE) {
+                gimbal.localPosition = origGimbalPos;
+                nozzleProgress = nozzleExtensionTime;
+            } else {
+                gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+                nozzleProgress = 0;
+            }
         }
 
         base.onFlightStart();
