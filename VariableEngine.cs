@@ -33,16 +33,17 @@ class MuMechVariableEngine : LiquidEngine {
     protected Vector3 origGimbalPos = Vector3.zero;
     protected bool gotGimbalOrig = false;
     protected float nozzleProgress = 0;
+    protected Transform nozzle = null;
 
     protected override void onPartStart() {
-        gimbal = transform.Find("model/obj_gimbal/nozzle");
-        if (gimbal == null) {
-            gimbal = transform.Find("model/obj_gimbal");
+        nozzle = transform.Find("model/obj_gimbal/nozzle");
+        if (nozzle == null) {
+            nozzle = transform.Find("model/obj_gimbal");
         }
-        if (gimbal != null) {
-            origGimbalPos = gimbal.localPosition;
+        if (nozzle != null) {
+            origGimbalPos = nozzle.localPosition;
             gotGimbalOrig = true;
-            gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+            nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
         }
 
         base.onPartStart();
@@ -50,16 +51,16 @@ class MuMechVariableEngine : LiquidEngine {
 
     protected override void onPartAttach(Part parent) {
         if (gotGimbalOrig) {
-            gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+            nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
         } else {
-            gimbal = transform.Find("model/obj_gimbal/nozzle");
-            if (gimbal == null) {
-                gimbal = transform.Find("model/obj_gimbal");
+            nozzle = transform.Find("model/obj_gimbal/nozzle");
+            if (nozzle == null) {
+                nozzle = transform.Find("model/obj_gimbal");
             }
-            if (gimbal != null) {
-                origGimbalPos = gimbal.localPosition;
+            if (nozzle != null) {
+                origGimbalPos = nozzle.localPosition;
                 gotGimbalOrig = true;
-                gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+                nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
             }
         }
 
@@ -68,14 +69,14 @@ class MuMechVariableEngine : LiquidEngine {
 
     protected override void onPartDetach() {
         if (gotGimbalOrig) {
-            gimbal.localPosition = origGimbalPos;
+            nozzle.localPosition = origGimbalPos;
         } else {
-            gimbal = transform.Find("model/obj_gimbal/nozzle");
-            if (gimbal == null) {
-                gimbal = transform.Find("model/obj_gimbal");
+            nozzle = transform.Find("model/obj_gimbal/nozzle");
+            if (nozzle == null) {
+                nozzle = transform.Find("model/obj_gimbal");
             }
-            if (gimbal != null) {
-                origGimbalPos = gimbal.localPosition;
+            if (nozzle != null) {
+                origGimbalPos = nozzle.localPosition;
                 gotGimbalOrig = true;
             }
         }
@@ -94,7 +95,7 @@ class MuMechVariableEngine : LiquidEngine {
 
         if ((nozzleExtension != 0) && (nozzleProgress < nozzleExtensionTime)) {
             nozzleProgress += TimeWarp.fixedDeltaTime;
-            gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension * (1 - nozzleProgress / nozzleExtensionTime);
+            nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension * (1 - nozzleProgress / nozzleExtensionTime);
         }
     }
 
@@ -314,21 +315,21 @@ class MuMechVariableEngine : LiquidEngine {
         }
 
         if (!gotGimbalOrig) {
-            gimbal = transform.Find("model/obj_gimbal/nozzle");
-            if (gimbal == null) {
-                gimbal = transform.Find("model/obj_gimbal");
+            nozzle = transform.Find("model/obj_gimbal/nozzle");
+            if (nozzle == null) {
+                nozzle = transform.Find("model/obj_gimbal");
             }
-            if (gimbal != null) {
-                origGimbalPos = gimbal.localPosition;
+            if (nozzle != null) {
+                origGimbalPos = nozzle.localPosition;
                 gotGimbalOrig = true;
             }
         }
         if (gotGimbalOrig) {
             if (state == PartStates.ACTIVE) {
-                gimbal.localPosition = origGimbalPos;
+                nozzle.localPosition = origGimbalPos;
                 nozzleProgress = nozzleExtensionTime;
             } else {
-                gimbal.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+                nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
                 nozzleProgress = 0;
             }
         }
