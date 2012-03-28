@@ -362,18 +362,27 @@ namespace MuMech
         //auto-stage when safe
         private void handleAutoStaging()
         {
+            //if (Input.GetKey(KeyCode.P))
+            //{
+            //    ARUtils.debugPartStates(part.vessel.rootPart, 0);
+            //}
+
+            print("handle auto staging");
             //if autostage enabled, and if we are not waiting on the pad, and if we didn't immediately just fire the previous stage
             if (autoStage && mode != ON_PAD && Staging.CurrentStage > 0 && Staging.CurrentStage > autoStageLimit 
                 && vesselState.time - lastStageTime > autoStageDelay)
             {
+                print("auto stage a");
                 //don't decouple active or idle engines or tanks
                 if (!ARUtils.inverseStageDecouplesActiveOrIdleEngineOrTank(Staging.CurrentStage - 1, part.vessel))  //if staging is safe:
                 {
+                    print("autostage b");
+
                     //only fire decouplers to drop deactivated engines or tanks
                     if (!ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel)
                         || ARUtils.inverseStageDecouplesDeactivatedEngineOrTank(Staging.CurrentStage - 1, part.vessel))
                     {
-
+                        print("auto stage c");
                         if (ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel))
                         {
                             //if we decouple things, delay the next stage a bit to avoid exploding the debris
@@ -534,6 +543,8 @@ namespace MuMech
 
             //minus sign is there because somewhere a sign got flipped in integrating with MechJeb
             double surfaceAngle = -desiredSurfaceAngle(vesselState.latitude * Math.PI / 180.0);
+            print("desiredInclination = " + desiredInclination);
+            print("surfaceAngle = " + surfaceAngle);
             Vector3d desiredSurfaceHeading = Math.Cos(surfaceAngle) * vesselState.east + Math.Sin(surfaceAngle) * vesselState.north;
             double desPitch = desiredPitch(vesselState.altitudeASL);
             Vector3d desiredVelocityUnit = Math.Cos(desPitch * Math.PI / 180) * desiredSurfaceHeading

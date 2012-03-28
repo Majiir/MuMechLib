@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using UnityEngine;
 
 namespace MuMech
 {
@@ -70,7 +71,8 @@ namespace MuMech
         //detect if a part is above an active or idle engine in the part tree
         public static bool hasActiveOrIdleEngineOrTankDescendant(Part p)
         {
-            if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine || p is FuelTank)) return true;
+            if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine)) return true;
+            if((p is FuelTank) && ((FuelTank)p).fuel > 0) return true; 
             foreach (Part child in p.children)
             {
                 if (hasActiveOrIdleEngineOrTankDescendant(child)) return true;
@@ -94,7 +96,10 @@ namespace MuMech
         {
             foreach (Part p in v.parts)
             {
-                if (p.inverseStage == inverseStage && (p is Decoupler || p is RadialDecoupler) && hasActiveOrIdleEngineOrTankDescendant(p)) return true;
+                if (p.inverseStage == inverseStage && (p is Decoupler || p is RadialDecoupler) && hasActiveOrIdleEngineOrTankDescendant(p))
+                {
+                    return true;
+                }
             }
             return false;
         }
@@ -170,9 +175,9 @@ namespace MuMech
         }
 
 
-        public static Vector3d computeTotalAccel(Vector3d pos, Vector3d vel, double dragCoeffOverMass, CelestialBody body)
+        public static Vector3d computeTotalAccel(Vector3d pos, Vector3d orbitVel, double dragCoeffOverMass, CelestialBody body)
         {
-            return FlightGlobals.getGeeForceAtPosition(pos) + computeDragAccel(pos, vel, dragCoeffOverMass, body);
+            return FlightGlobals.getGeeForceAtPosition(pos) + computeDragAccel(pos, orbitVel, dragCoeffOverMass, body);
         }
 
 
@@ -200,6 +205,18 @@ namespace MuMech
         }
 
 
+
+        public static void debugPartStates(Part root, int level)
+        {
+            String space = "";
+            for (int i = 0; i < level; i++) space += " ";
+            MonoBehaviour.print(space + root + " - " + root.State);
+            foreach (Part child in root.children)
+            {
+                debugPartStates(child, level + 2);
+            }
+        }
+            
     }
 
 }

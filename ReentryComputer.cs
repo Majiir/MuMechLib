@@ -11,7 +11,7 @@ namespace MuMech
 
     class ReentryComputer : ComputerModule
     {
-        public ReentryComputer(MechJebCore core) : base(core) {  }
+        public ReentryComputer(MechJebCore core) : base(core) { }
 
         double _targetLatitude;
         double targetLatitude
@@ -67,7 +67,7 @@ namespace MuMech
             settings["RC_targetLatitude"].value_decimal = targetLatitude;
             settings["RC_targetLongitude"].value_decimal = targetLongitude;
             settings["RC_helpWindowPos"].value_vector = new Vector4(helpWindowPos.x, helpWindowPos.y);
-            
+
         }
 
         const int ON_COURSE = 0, COURSE_CORRECTIONS = 1, PREPARING_TO_DECELERATE = 2, DECELERATING = 3, HOVER = 4, FINAL_DESCENT = 5;
@@ -76,7 +76,7 @@ namespace MuMech
 
         //simulation stuff:
         const double simulationTimeStep = 0.2; //seconds
-        SimulationResult simulationResult = new SimulationResult();        
+        SimulationResult simulationResult = new SimulationResult();
         long nextSimulationDelayMs = 0;
         Stopwatch nextSimulationTimer = new Stopwatch();
 
@@ -143,11 +143,11 @@ namespace MuMech
             double newTargetLatitude;
             if (Double.TryParse(targetLatitudeString, out newTargetLatitude)) targetLatitude = newTargetLatitude;
             else parseError = true;
-            
+
             double newTargetLongitude;
             if (Double.TryParse(targetLongitudeString, out newTargetLongitude)) targetLongitude = newTargetLongitude;
             else parseError = true;
-            
+
             GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
             if (parseError) labelStyle.normal.textColor = Color.yellow;
 
@@ -190,7 +190,7 @@ namespace MuMech
                     break;
             }
 
-            if ((simulationResult.endCondition == SimulationResult.EndCondition.LANDED || simulationResult.endCondition == SimulationResult.EndCondition.AEROBRAKED) 
+            if ((simulationResult.endCondition == SimulationResult.EndCondition.LANDED || simulationResult.endCondition == SimulationResult.EndCondition.AEROBRAKED)
                 && part.vessel.mainBody.maxAtmosphereAltitude > 0)
             {
                 GUILayout.Label(String.Format("Predicted maximum of {0:0.0} gees", simulationResult.predictedMaxGees));
@@ -208,7 +208,7 @@ namespace MuMech
             bool newAutoLandAtTarget = GUILayout.Toggle(autoLandAtTarget, "Auto-land at target", new GUIStyle(GUI.skin.button));
             if (newAutoLandAtTarget && !autoLandAtTarget && simulationResult.endCondition != SimulationResult.EndCondition.LANDED) deorbitBurnFirstMessage = true;
             else autoLandAtTarget = newAutoLandAtTarget;
-            
+
             if (autoLandAtTarget)
             {
                 autoLand = false;
@@ -221,7 +221,7 @@ namespace MuMech
 
             if (!autoLand && !autoLandAtTarget) extendedLandingLegs = false;
 
-            if(autoLand || autoLandAtTarget) deorbitBurnFirstMessage = false;
+            if (autoLand || autoLandAtTarget) deorbitBurnFirstMessage = false;
 
             GUILayout.EndHorizontal();
 
@@ -249,8 +249,8 @@ namespace MuMech
             }
 
             GUILayout.BeginHorizontal();
-            
-            
+
+
             GUILayout.EndHorizontal();
 
 
@@ -358,7 +358,7 @@ namespace MuMech
                         steerTowardThrustVector(s, desiredThrustVector);
 
                         double speedCorrectionTimeConstant = 10.0;
-                        
+
                         if (Vector3d.Dot(vesselState.forward, desiredThrustVector) > 0.75)
                         {
                             s.mainThrottle = Mathf.Clamp((float)(velocityCorrection.magnitude / (speedCorrectionTimeConstant * vesselState.maxThrustAccel)), 0.0F, 1.0F);
@@ -397,20 +397,12 @@ namespace MuMech
                     desiredThrustVector -= Math.Min(0.05, velocitySurfaceComponent.magnitude) * velocitySurfaceComponent.normalized;
                     steerTowardThrustVector(s, desiredThrustVector.normalized);
 
-                    //control thrust to control vertical speed:
-                    double minAccel = -vesselState.localg;
-                    double maxAccel = -vesselState.localg + Vector3d.Dot(vesselState.forward, vesselState.up) * vesselState.maxThrustAccel;
-                    double controlledSpeed = Vector3d.Dot(vesselState.velocityVesselSurface, vesselState.up);
-                    double speedCorrectionTimeConstant = 0.3;
-
-                    double descentSpeed;
-                    if (vesselState.altitudeTrue > 200) descentSpeed = -0.5 * Math.Sqrt(2 * maxAccel * vesselState.altitudeTrue);
-                    else descentSpeed = -0.5 * Math.Sqrt(2 * maxAccel * 200) * Math.Min(vesselState.altitudeTrue, vesselState.altitudeASL) / 200.0; //desired descent speed
-
+                    
+                    
                     //the "HOVER" state is a brief burst of thrust that kills all ground velocity parallel to the thrust vector,
                     //so we can drop straight down. Stop thrusting when there is a positive component of velocity along
                     //the ground projection of the thrust vector
-                    if (landerState != FINAL_DESCENT 
+                    if (landerState != FINAL_DESCENT
                         && Vector3d.Dot(Vector3d.Exclude(vesselState.up, vesselState.forward), vesselState.velocityVesselSurface) < 0)
                     {
                         landerState = HOVER;
@@ -423,16 +415,20 @@ namespace MuMech
                     double desiredSpeed;
                     if (landerState == FINAL_DESCENT)
                     {
-                        desiredSpeed = descentSpeed;
+                        desiredSpeed = verticalDescentSpeed();
                     }
                     else //landerState == HOVER
                     {
                         desiredSpeed = 0; //hover until horizontal velocity is killed
                     }
 
-                    //set throttle appropriately:
+                    //control thrust to control vertical speed:
+                    double controlledSpeed = Vector3d.Dot(vesselState.velocityVesselSurface, vesselState.up);
                     double speedError = desiredSpeed - controlledSpeed;
+                    double speedCorrectionTimeConstant = 0.3;
                     double desiredAccel = speedError / speedCorrectionTimeConstant;
+                    double minAccel = -vesselState.localg;
+                    double maxAccel = -vesselState.localg + Vector3d.Dot(vesselState.forward, vesselState.up) * vesselState.maxThrustAccel;
                     s.mainThrottle = Mathf.Clamp((float)((desiredAccel - minAccel) / (maxAccel - minAccel)), 0.0F, 1.0F);
 
                     //use RCS to help kill horizontal velocity
@@ -480,7 +476,7 @@ namespace MuMech
                         desiredThrustVector = (desiredThrustVector + velACorrectionAngle * velAUnit + velBCorrectionAngle * velBUnit).normalized;
                     }
 
-                    if (Vector3d.Dot(vesselState.velocityVesselSurface, vesselState.up) > 0 
+                    if (Vector3d.Dot(vesselState.velocityVesselSurface, vesselState.up) > 0
                              || Vector3d.Dot(vesselState.forward, desiredThrustVector) < 0.75)
                     {
                         s.mainThrottle = 0;
@@ -504,8 +500,8 @@ namespace MuMech
 
         bool courseCorrectionsAllowed()
         {
-            return (vesselState.speedSurface < 0.8 * decelerationSpeed(vesselState.altitudeASL, vesselState.maxThrustAccel, part.vessel.mainBody) 
-                    && vesselState.altitudeASL > 5000);
+            return (vesselState.speedSurface < 0.8 * decelerationSpeed(vesselState.altitudeASL, vesselState.maxThrustAccel, part.vessel.mainBody)
+                    && vesselState.altitudeASL > 10000);
         }
 
         void extendLandingLegs()
@@ -574,6 +570,9 @@ namespace MuMech
         {
             if (!enabled) return;
 
+            print("altitudeASL = " + vesselState.altitudeASL);
+            print("altitudeTrue = " + vesselState.altitudeTrue);
+
             if (part.vessel.mainBody.maxAtmosphereAltitude > 0)
             {
                 double groundAltitude = vesselState.altitudeASL - vesselState.altitudeTrue;
@@ -581,9 +580,9 @@ namespace MuMech
             }
             else
             {
-                decelerationEndAltitudeASL = 2500.0;
+                decelerationEndAltitudeASL = 5000.0;
             }
-            
+
 
             currentLatitude = part.vessel.mainBody.GetLatitude(vesselState.CoM);
             currentLongitude = part.vessel.mainBody.GetLongitude(vesselState.CoM);
@@ -604,7 +603,7 @@ namespace MuMech
 
 
 
-            if (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate && 
+            if (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate &&
                 (nextSimulationDelayMs == 0 || nextSimulationTimer.ElapsedMilliseconds > nextSimulationDelayMs))
             {
                 Stopwatch s = Stopwatch.StartNew();
@@ -634,7 +633,7 @@ namespace MuMech
             }
 
         }
-        
+
 
         public override String getName()
         {
@@ -667,11 +666,23 @@ namespace MuMech
             return 0.8 * Math.Sqrt(2 * (thrustAcc - surfaceGravity) * (altitudeASL - decelerationEndAltitudeASL));
         }
 
+        double verticalDescentSpeed()
+        {
+            double minTrueAltitude = Math.Min(1000.0, Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue));
+            double totalAccel = vesselState.maxThrustAccel - vesselState.localg;
+
+            if (totalAccel < 0) return 0; //we're screwed
+
+            if (minTrueAltitude > 200) return 0.5 * Math.Sqrt(2 * totalAccel * minTrueAltitude);
+            else return -0.5 * Math.Sqrt(2 * minTrueAltitude * 200) * minTrueAltitude / 200.0;
+        }
+
+
         ///////////////////////////////////////
         // REENTRY SIMULATION /////////////////
         ///////////////////////////////////////
 
-        
+
 
         //inverse matrix:
 
@@ -697,18 +708,20 @@ namespace MuMech
             if (resultA.endCondition != SimulationResult.EndCondition.LANDED)
             {
                 gaveUpOnCourseCorrections = true;
+                print("gave up a");
                 correctedSurfaceVelocity = vesselState.velocityVesselSurface - 10 * vesselState.velocityVesselSurface.normalized;
                 return;
             }
 
             //simulate a trajectory where we have extra velocity in the B direction
-            SimulationResult resultB = simulateReentryRK4(simulationTimeStep*10.0, offsetMagnitude * velBUnit);
+            SimulationResult resultB = simulateReentryRK4(simulationTimeStep * 10.0, offsetMagnitude * velBUnit);
             double velBLatitude = resultB.predictedLandingLatitude;
             double velBLongitude = resultB.predictedLandingLongitude;
 
             if (resultB.endCondition != SimulationResult.EndCondition.LANDED)
             {
                 gaveUpOnCourseCorrections = true;
+                print("gave up b");
                 correctedSurfaceVelocity = vesselState.velocityVesselSurface - 10 * vesselState.velocityVesselSurface.normalized;
                 return;
             }
@@ -719,6 +732,7 @@ namespace MuMech
             if (resultCurrent.endCondition != SimulationResult.EndCondition.LANDED)
             {
                 gaveUpOnCourseCorrections = true;
+                print("gave up c");
                 correctedSurfaceVelocity = vesselState.velocityVesselSurface - 10 * vesselState.velocityVesselSurface.normalized;
                 return;
             }
@@ -740,7 +754,7 @@ namespace MuMech
                                                                                      clampDegrees(targetLongitude - simulationResult.predictedLandingLongitude)));
 
             Vector3d velocityCorrection = correctionMagnitudes.x * velAUnit + correctionMagnitudes.y * velBUnit;
-            
+
             correctedSurfaceVelocity = vesselState.velocityVesselSurface + velocityCorrection;
             correctedSurfaceVelocitySet = true;
         }
@@ -761,6 +775,7 @@ namespace MuMech
             if (resultPrograde.endCondition != SimulationResult.EndCondition.LANDED)
             {
                 gaveUpOnCourseCorrections = true;
+                print("gave up d");
                 return vesselState.velocityVesselSurfaceUnit;
             }
             double progradeLandingLatitude = resultPrograde.predictedLandingLatitude;
@@ -773,6 +788,7 @@ namespace MuMech
             if (resultUp.endCondition != SimulationResult.EndCondition.LANDED)
             {
                 gaveUpOnCourseCorrections = true;
+                print("gave up e");
                 return vesselState.velocityVesselSurfaceUnit;
             }
 
@@ -785,6 +801,7 @@ namespace MuMech
             if (resultCurrent.endCondition != SimulationResult.EndCondition.LANDED)
             {
                 gaveUpOnCourseCorrections = true;
+                print("gave up f");
                 return vesselState.velocityVesselSurfaceUnit;
             }
 
@@ -828,7 +845,7 @@ namespace MuMech
                 result.endCondition = SimulationResult.EndCondition.NO_REENTRY;
                 return result;
             }
-            
+
             Vector3d pos = freefallTrajectory.positionAtTime(initialT);
             Vector3d vel = freefallTrajectory.velocityAtTime(initialT);
 
@@ -935,7 +952,7 @@ namespace MuMech
             Vector3d currentSurfaceVelocity = currentOrbitVelocity - part.vessel.mainBody.getRFrmVel(currentPosition);
 
             //check if we already should be decelerating or will be momentarily:
-            if (currentSurfaceVelocity.magnitude > 0.9 * decelerationSpeed(currentAltitude , vesselState.maxThrustAccel, part.vessel.mainBody))
+            if (currentSurfaceVelocity.magnitude > 0.9 * decelerationSpeed(currentAltitude, vesselState.maxThrustAccel, part.vessel.mainBody))
             {
                 return vesselState.time;
             }
@@ -961,7 +978,7 @@ namespace MuMech
                 double testSpeed = testSurfaceVelocity.magnitude;
 
                 if (testAltitude < part.vessel.mainBody.maxAtmosphereAltitude
-                    || testAltitude < decelerationEndAltitudeASL 
+                    || testAltitude < decelerationEndAltitudeASL
                     || testSpeed > 0.9 * decelerationSpeed(testAltitude, vesselState.maxThrustAccel, part.vessel.mainBody))
                 {
                     maxReentryTime = test;

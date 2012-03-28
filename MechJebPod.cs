@@ -125,7 +125,7 @@ class MuMechJebPod : CommandPod {
         }
 
         if (core.rotationActive) {
-            eye.rotation = Quaternion.RotateTowards(eye.rotation, core.rotationGetReferenceRotation(core.rotationReference) * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
+            eye.rotation = Quaternion.RotateTowards(eye.rotation, core.rotationGetReferenceRotation(core.rotationReference) * core.rotationTarget * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
         } else {
             if (brainStress < brainStressMin) {
                 eye.rotation = Quaternion.RotateTowards(eye.rotation, Quaternion.LookRotation((cam.transform.position - eye.position).normalized, cam.transform.up) * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);

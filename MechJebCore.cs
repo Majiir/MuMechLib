@@ -420,7 +420,7 @@ namespace MuMech {
                 double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
                 t_prev_err = t_err;
 
-                double int_error = Mathf.Abs(Quaternion.Angle(rotationGetReferenceRotation(rotationReference), part.vessel.transform.rotation) - 90);
+                double int_error = Mathf.Abs(Quaternion.Angle(rotationGetReferenceRotation(rotationReference) * rotationTarget, part.vessel.transform.rotation * Quaternion.Euler(-90, 0, 0)));
                 if ((tmode != TMode.KEEP_VERTICAL) || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 45))) {
                     if (fullBlast) {
                         trans_prev_thrust = s.mainThrottle = 1;
@@ -443,8 +443,8 @@ namespace MuMech {
 
                 Quaternion target = rotationGetReferenceRotation(rotationReference) * rotationTarget;
                 Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * target);
-                if (Mathf.Abs(Quaternion.Angle(target, Quaternion.identity)) > 30) {
-                    target = Quaternion.Slerp(Quaternion.identity, target, 0.1F);
+                if (Mathf.Abs(Quaternion.Angle(delta, Quaternion.identity)) > 30) {
+                    delta = Quaternion.Slerp(Quaternion.identity, delta, 0.1F);
                 }
                 Vector3d deltaEuler = delta.eulerAngles;
 
