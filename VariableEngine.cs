@@ -25,6 +25,7 @@ class MuMechVariableEngine : LiquidEngine {
 
     public float nozzleExtension = 0;
     public float nozzleExtensionTime = 5;
+    public Vector3 nozzleAxis = Vector3.up;
 
     protected bool gamePaused = false;
     protected float minThrustOrig = 0;
@@ -43,7 +44,7 @@ class MuMechVariableEngine : LiquidEngine {
         if (nozzle != null) {
             origGimbalPos = nozzle.localPosition;
             gotGimbalOrig = true;
-            nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+            nozzle.localPosition = origGimbalPos + nozzleAxis.normalized * nozzleExtension;
         }
 
         base.onPartStart();
@@ -51,7 +52,7 @@ class MuMechVariableEngine : LiquidEngine {
 
     protected override void onPartAttach(Part parent) {
         if (gotGimbalOrig) {
-            nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+            nozzle.localPosition = origGimbalPos + nozzleAxis.normalized * nozzleExtension;
         } else {
             nozzle = transform.Find("model/obj_gimbal/nozzle");
             if (nozzle == null) {
@@ -60,7 +61,7 @@ class MuMechVariableEngine : LiquidEngine {
             if (nozzle != null) {
                 origGimbalPos = nozzle.localPosition;
                 gotGimbalOrig = true;
-                nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+                nozzle.localPosition = origGimbalPos + nozzleAxis.normalized * nozzleExtension;
             }
         }
 
@@ -95,7 +96,7 @@ class MuMechVariableEngine : LiquidEngine {
 
         if ((nozzleExtension != 0) && (nozzleProgress < nozzleExtensionTime)) {
             nozzleProgress += TimeWarp.fixedDeltaTime;
-            nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension * (1 - nozzleProgress / nozzleExtensionTime);
+            nozzle.localPosition = origGimbalPos + nozzleAxis.normalized * nozzleExtension * (1 - nozzleProgress / nozzleExtensionTime);
         }
     }
 
@@ -329,7 +330,7 @@ class MuMechVariableEngine : LiquidEngine {
                 nozzle.localPosition = origGimbalPos;
                 nozzleProgress = nozzleExtensionTime;
             } else {
-                nozzle.localPosition = origGimbalPos + thrustVector.normalized * nozzleExtension;
+                nozzle.localPosition = origGimbalPos + nozzleAxis.normalized * nozzleExtension;
                 nozzleProgress = 0;
             }
         }
