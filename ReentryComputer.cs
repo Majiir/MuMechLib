@@ -76,7 +76,7 @@ namespace MuMech
 
         //simulation stuff:
         const double simulationTimeStep = 0.2; //seconds
-        SimulationResult simulationResult;        
+        SimulationResult simulationResult = new SimulationResult();        
         long nextSimulationDelayMs = 0;
         Stopwatch nextSimulationTimer = new Stopwatch();
 
@@ -98,9 +98,10 @@ namespace MuMech
         bool autoLandAtTarget = false;
         bool courseCorrected = false;
         bool gaveUpOnCourseCorrections = false;
+        bool tooLittleThrustToLand = false;
         bool deorbitBurnFirstMessage = false;
         bool extendedLandingLegs = false;
-        double decelerationEndAltitudeASL = 1000.0;
+        double decelerationEndAltitudeASL = 2500.0;
 
 
 
@@ -237,6 +238,7 @@ namespace MuMech
                 autoLandAtTarget = false;
                 GUILayout.Label("Gave up on landing at target. Is it on the wrong side of " + part.vessel.mainBody.name + "?", yellow);
             }
+            if (tooLittleThrustToLand) GUILayout.Label("Warning: Too little thrust to land.", yellow);
             if (deorbitBurnFirstMessage) GUILayout.Label("You must do a deorbit burn before activating auto-land", yellow);
 
 
@@ -270,7 +272,7 @@ namespace MuMech
 "Using \"Auto-land at target\":\n\n" +
 "\"Auto-land at target\" is best activated immediately after your deorbit burn. You don't have to make a very precise deorbit burn: the autopilot will automatically correct the trajectory to point toward the desired landing site. However, you do need to make sure that you do your deorbit burn on the correct side of the planet or Mun. A decent rule of thumb is to do your deorbit burn when your target is 90 degrees ahead of you along your orbit. Once the landing autopilot has corrected the trajectory, it will display \"On course for target.\" At this point it's safe to activate time warp if you want to speed up the landing.\n\n" +
 "The landing autopilot will automatically deactivate time warp as it prepares to make the deceleration burn. During Mun landings, the autopilot will continue to make subtle corrections to the landing trajectory during the deceleration burn to aim more precisely at your target.\n\n" +
-"For Mun landings, the deceleration burn ends directly above the target at an altitude of 1000m. The autopilot will kill all horizontal speed and descend vertically to the target. For Kerbin landings, the deceleration burn occurs in the last 2000m of the descent.\n\n" +
+"For Mun landings, the deceleration burn ends directly above the target at an altitude of 2500m. The autopilot will kill all horizontal speed and descend vertically to the target. For Kerbin landings, the deceleration burn occurs in the last 2000m of the descent.\n\n" +
 "Note that if you enable RCS during the final vertical descent, the autopilot will automatically use it to kill horizontal velocity and help land vertically.");
             GUILayout.EndScrollView();
             GUI.DragWindow();
@@ -405,10 +407,9 @@ namespace MuMech
                     if (vesselState.altitudeTrue > 200) descentSpeed = -0.5 * Math.Sqrt(2 * maxAccel * vesselState.altitudeTrue);
                     else descentSpeed = -0.5 * Math.Sqrt(2 * maxAccel * 200) * Math.Min(vesselState.altitudeTrue, vesselState.altitudeASL) / 200.0; //desired descent speed
 
-                    //need to fix this logic!!!!!!!!!!!!!!
-                    //if (landerState != FINAL_DESCENT || velocitySurfaceComponent.magnitude > 0.5) landerState = HOVER;
-                    //else if (landerState == HOVER && velocitySurfaceComponent.magnitude < 0.3) landerState = FINAL_DESCENT;
-
+                    //the "HOVER" state is a brief burst of thrust that kills all ground velocity parallel to the thrust vector,
+                    //so we can drop straight down. Stop thrusting when there is a positive component of velocity along
+                    //the ground projection of the thrust vector
                     if (landerState != FINAL_DESCENT 
                         && Vector3d.Dot(Vector3d.Exclude(vesselState.up, vesselState.forward), vesselState.velocityVesselSurface) < 0)
                     {
@@ -459,14 +460,6 @@ namespace MuMech
                     }
 
                     double controlledSpeed = vesselState.speedSurface * Math.Sign(Vector3d.Dot(vesselState.velocityVesselSurface, vesselState.up)); //positive if we are ascending, negative if descending
-                    double decelerationAccel = vesselState.maxThrustAccel;
-                    if (part.vessel.mainBody.maxAtmosphereAltitude > 0)
-                    {
-                        Vector3d pos5km = part.vessel.mainBody.position + (part.vessel.mainBody.Radius + 5000) * vesselState.up;
-                        double airDensityAt5km = FlightGlobals.getAtmDensity(FlightGlobals.getStaticPressure(pos5km, part.vessel.mainBody)) / 125.0;
-                        double dragAccelAt5km = 0.5 * airDensityAt5km * vesselState.massDrag / vesselState.mass * vesselState.velocityVesselSurface.sqrMagnitude;
-                        decelerationAccel += dragAccelAt5km;
-                    }
                     double desiredSpeed = -decelerationSpeed(vesselState.altitudeASL, vesselState.maxThrustAccel, part.vessel.mainBody);
                     double desiredSpeedAfterDt = -decelerationSpeed(vesselState.altitudeASL + vesselState.deltaT * Vector3d.Dot(vesselState.velocityVesselSurface, vesselState.up), vesselState.maxThrustAccel, part.vessel.mainBody);
                     double minAccel = -vesselState.localg * Math.Abs(Vector3d.Dot(vesselState.velocityVesselSurfaceUnit, vesselState.up));
@@ -588,7 +581,7 @@ namespace MuMech
             }
             else
             {
-                decelerationEndAltitudeASL = 1000.0;
+                decelerationEndAltitudeASL = 2500.0;
             }
             
 
@@ -653,7 +646,7 @@ namespace MuMech
         ///////////////////////////////////////
 
 
-        //the deceleration phase gradually decelerates to come to a hover at 1000m ASL
+        //the deceleration phase gradually decelerates to come to a hover at 2000m ASL
         //this function gives the speed of the vessel as a function of altitude for the deceleration phase
         double decelerationSpeed(double altitudeASL, double thrustAcc, CelestialBody body)
         {
@@ -661,6 +654,16 @@ namespace MuMech
             if (body.maxAtmosphereAltitude > 0 && altitudeASL > 2000) return Double.MaxValue;
 
             double surfaceGravity = ARUtils.G * body.Mass / Math.Pow(body.Radius, 2);
+            if (thrustAcc < surfaceGravity)
+            {
+                tooLittleThrustToLand = true;
+                return Double.MaxValue;
+            }
+            else
+            {
+                tooLittleThrustToLand = false;
+            }
+
             return 0.8 * Math.Sqrt(2 * (thrustAcc - surfaceGravity) * (altitudeASL - decelerationEndAltitudeASL));
         }
 
@@ -819,7 +822,6 @@ namespace MuMech
             //or start decelerating with thrust:
             AROrbit freefallTrajectory = new AROrbit(vesselState.CoM, vesselState.velocityVesselOrbit + velOffset, vesselState.time, part.vessel.mainBody);
             double initialT = projectFreefallEndTime(freefallTrajectory/*, groundAltitude*/);
-            
             //a hack to detect improperly initialized stuff and not try to do the simulation
             if (double.IsNaN(initialT))
             {

@@ -175,49 +175,42 @@ namespace MuMech {
 
         public override void onPartUpdate() {
             if (mode_changed) {
+                windowPos = new Rect(windowPos.x, windowPos.y, 10, 10);
+
                 if (mode != Mode.SURFACE) {
                     srf_act = false;
                 }
+
                 if (((mode != Mode.OFF) && (mode != Mode.STANDBY)) || ((mode == Mode.SURFACE) && (srf_act))) {
-                    Vector3d prograde = vesselState.velocityVesselOrbit.normalized;
-                    Quaternion obt = Quaternion.LookRotation(prograde, vesselState.up);
-
-                    Vector3 tgt_fwd = part.vessel.transform.up;
-                    Vector3 tgt_up = -part.vessel.transform.forward;
-
                     switch (mode) {
                         case Mode.KILLROT:
+                            core.rotateTo(part.vessel.transform.up, MechJebCore.RotationReference.INERTIAL);
                             break;
                         case Mode.SURFACE:
-                            Quaternion r = Quaternion.LookRotation(vesselState.up, part.vessel.mainBody.transform.up) * Quaternion.AngleAxis(srf_act_hdg + 180.0F, Vector3.forward) * Quaternion.AngleAxis(90.0F - srf_act_pit, Vector3.right);
-
-                            tgt_fwd = r * Vector3.forward;
-                            if (srf_act_pit == 90.0F) {
-                                tgt_up = -part.vessel.transform.forward;
-                            }
+                            Quaternion r = Quaternion.AngleAxis(srf_act_hdg, Vector3.up) * Quaternion.AngleAxis(-srf_act_pit, Vector3.right);
+                            core.rotateTo(r, MechJebCore.RotationReference.SURFACE);
                             break;
                         case Mode.PROGRADE:
-                            tgt_fwd = prograde;
+                            core.rotateTo(Vector3d.forward, MechJebCore.RotationReference.ORBIT);
                             break;
                         case Mode.RETROGRADE:
-                            tgt_fwd = -prograde;
+                            core.rotateTo(Vector3d.back, MechJebCore.RotationReference.ORBIT);
                             break;
                         case Mode.NORMAL_PLUS:
-                            tgt_fwd = obt * Vector3.left;
+                            core.rotateTo(Vector3d.left, MechJebCore.RotationReference.ORBIT);
                             break;
                         case Mode.NORMAL_MINUS:
-                            tgt_fwd = obt * Vector3.right;
+                            core.rotateTo(Vector3d.right, MechJebCore.RotationReference.ORBIT);
                             break;
                         case Mode.RADIAL_PLUS:
-                            tgt_fwd = obt * Vector3.up;
-                            tgt_up = prograde;
+                            core.rotateTo(Vector3d.up, MechJebCore.RotationReference.ORBIT);
                             break;
                         case Mode.RADIAL_MINUS:
-                            tgt_fwd = obt * Vector3.down;
-                            tgt_up = prograde;
+                            core.rotateTo(Vector3d.down, MechJebCore.RotationReference.ORBIT);
                             break;
                     }
-                    core.rotateTo(Quaternion.LookRotation(tgt_fwd, tgt_up), MechJebCore.RotationReference.INERTIAL);
+                } else {
+                    core.rotationActive = false;
                 }
 
                 mode_changed = false;

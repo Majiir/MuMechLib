@@ -389,6 +389,9 @@ namespace MuMech
         //slews the ship toward desiredThrustVector
         void steerTowardThrustVector(FlightCtrlState s, Vector3d desiredThrustVector)
         {
+            //hack
+            if (desiredThrustVector == Vector3d.zero) return;
+
             if (Vector3d.Dot(vesselState.forward, desiredThrustVector) < 0)
             {
                 //if our current heading is way off the desired one, establish an intermediate goal that is less than 90 degrees away:
@@ -660,6 +663,7 @@ namespace MuMech
             {
                 s.mainThrottle = throttleToRaiseApoapsis(part.vessel.orbit.ApR, desiredOrbitRadius);
                 lastAccelerationTime = vesselState.time;
+                return vesselState.velocityVesselOrbitUnit;
             }
 
             //if we are out of the atmosphere and have a high enough apoapsis and aren't near apoapsis, play dead to 
@@ -670,7 +674,7 @@ namespace MuMech
                 && part.vessel.orbit.timeToAp > lookaheadTimes[2]
                 && part.vessel.orbit.ApR > desiredOrbitRadius - 10)
             {
-                return vesselState.forward;
+                return Vector3d.zero;
             }
             else
             {

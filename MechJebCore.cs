@@ -340,14 +340,14 @@ namespace MuMech {
                 return;
             }
 
-            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) {
-                return;
-            }
-
             foreach (ComputerModule module in modules) {
                 if (module.enabled) {
                     module.drive(s);
                 }
+            }
+
+            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) {
+                return;
             }
 
             if (tmode != TMode.OFF) {
@@ -441,9 +441,14 @@ namespace MuMech {
 
                 s.killRot = false;
 
-                Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * rotationGetReferenceRotation(rotationReference) * rotationTarget);
+                Quaternion target = rotationGetReferenceRotation(rotationReference) * rotationTarget;
+                Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * target);
+                if (Mathf.Abs(Quaternion.Angle(target, Quaternion.identity)) > 30) {
+                    target = Quaternion.Slerp(Quaternion.identity, target, 0.1F);
+                }
+                Vector3d deltaEuler = delta.eulerAngles;
 
-                Vector3d err = new Vector3d((delta.eulerAngles.x > 180) ? (delta.eulerAngles.x - 360.0F) : delta.eulerAngles.x, (delta.eulerAngles.y > 180) ? (delta.eulerAngles.y - 360.0F) : delta.eulerAngles.y, (delta.eulerAngles.z > 180) ? (delta.eulerAngles.z - 360.0F) : delta.eulerAngles.z) * Math.PI / 180.0F;
+                Vector3d err = new Vector3d((deltaEuler.x > 180) ? (deltaEuler.x - 360.0F) : deltaEuler.x, (deltaEuler.y > 180) ? (deltaEuler.y - 360.0F) : deltaEuler.y, (deltaEuler.z > 180) ? (deltaEuler.z - 360.0F) : deltaEuler.z) * Math.PI / 180.0F;
                 err.Scale(new Vector3d(vesselState.MoI.x / (vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle), vesselState.MoI.z / (vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle), vesselState.MoI.y / vesselState.torqueRAvailable));
                 integral += err * TimeWarp.fixedDeltaTime;
                 Vector3d deriv = (err - prev_err) / TimeWarp.fixedDeltaTime;
@@ -535,6 +540,8 @@ namespace MuMech {
         }
 
         public void onPartStart() {
+            vesselState = new VesselState();
+
             modules.Add(new MechJebModuleSmartASS(this));
             modules.Add(new MechJebModuleTranslatron(this));
             modules.Add(new MechJebModuleOrbitInfo(this));
