@@ -76,7 +76,7 @@ class MuMechRCSLiquidEngine : LiquidEngine {
     }
 
     protected override void onDisconnect() {
-        if (vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
+        if ((vessel != null) && vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
             vessels[vessel].controller = null;
             RenderingManager.RemoveFromPostDrawQueue(3, new Callback(drawGUI));
         }
@@ -85,7 +85,7 @@ class MuMechRCSLiquidEngine : LiquidEngine {
     }
 
     protected override void onPartDestroy() {
-        if (vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
+        if ((vessel != null) && vessels.ContainsKey(vessel) && (vessels[vessel].controller == this)) {
             vessels[vessel].controller = null;
             RenderingManager.RemoveFromPostDrawQueue(3, new Callback(drawGUI));
         }

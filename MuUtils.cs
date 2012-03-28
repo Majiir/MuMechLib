@@ -82,7 +82,7 @@ namespace MuMech {
         }
     }
 
-    class MovingAverage {
+    public class MovingAverage {
         private double[] store;
         private int storeSize;
         private int nextIndex = 0;

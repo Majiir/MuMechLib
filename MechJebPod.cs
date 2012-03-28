@@ -32,14 +32,17 @@ class MuMechJebPod : CommandPod {
         core = new MechJebCore();
         core.part = this;
 
-        InternalModel m = GameObject.Find("internalSpace").transform.FindChild("mk1pod_internal").GetComponent<InternalModel>();
+        GameObject iS = GameObject.Find("internalSpace");
+        if (iS != null) {
+            InternalModel m = iS.transform.FindChild("mk1pod_internal").GetComponent<InternalModel>();
 
-        if (m != null) {
-            if (defSeat == null) {
-                defSeat = (Transform[])m.seats.Clone();
+            if (m != null) {
+                if (defSeat == null) {
+                    defSeat = (Transform[])m.seats.Clone();
+                }
+
+                m.seats = new Transform[0];
             }
-
-            m.seats = new Transform[0];
         }
 
         base.onPartAwake();
@@ -62,10 +65,14 @@ class MuMechJebPod : CommandPod {
     protected override void onPartStart() {
         stackIcon.SetIcon(DefaultIcons.ADV_SAS);
 
-        internalModel = new InternalModel();
-        InternalModel m = GameObject.Find("internalSpace").transform.FindChild("mk1pod_internal").GetComponent<InternalModel>();
-        if (m.seats.Length == 0) {
-            m.seats = defSeat;
+        GameObject iS = GameObject.Find("internalSpace");
+        if (iS != null) {
+            InternalModel m = iS.transform.FindChild("mk1pod_internal").GetComponent<InternalModel>();
+            if (m.seats.Length == 0) {
+                m.seats = defSeat;
+            }
+
+            internalModel = new InternalModel();
         }
 
         core.part = this;
@@ -117,8 +124,8 @@ class MuMechJebPod : CommandPod {
             cam = (FlightCamera)GameObject.FindObjectOfType(typeof(FlightCamera));
         }
 
-        if ((core.mode != MechJebCore.Mode.OFF) && (core.mode != MechJebCore.Mode.STANDBY)) {
-            eye.rotation = Quaternion.RotateTowards(eye.rotation, core.internal_target * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
+        if (core.rotationActive) {
+            eye.rotation = Quaternion.RotateTowards(eye.rotation, core.rotationGetReferenceRotation(core.rotationReference) * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
         } else {
             if (brainStress < brainStressMin) {
                 eye.rotation = Quaternion.RotateTowards(eye.rotation, Quaternion.LookRotation((cam.transform.position - eye.position).normalized, cam.transform.up) * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
@@ -198,5 +205,80 @@ class MuMechJebPod : CommandPod {
     protected override void onGameResume() {
         core.onGameResume();
         base.onGameResume();
+    }
+
+    protected override void onActiveFixedUpdate() {
+        core.onActiveFixedUpdate();
+        base.onActiveFixedUpdate();
+    }
+
+    protected override void onActiveUpdate() {
+        core.onActiveUpdate();
+        base.onActiveUpdate();
+    }
+
+    public override void onBackup() {
+        core.onBackup();
+        base.onBackup();
+    }
+
+    protected override void onDecouple(float breakForce) {
+        core.onDecouple(breakForce);
+        base.onDecouple(breakForce);
+    }
+
+    protected override void onFlightStartAtLaunchPad() {
+        core.onFlightStartAtLaunchPad();
+        base.onFlightStartAtLaunchPad();
+    }
+
+    protected override void onPack() {
+        core.onPack();
+        base.onPack();
+    }
+
+    protected override bool onPartActivate() {
+        core.onPartActivate();
+        return base.onPartActivate();
+    }
+
+    protected override void onPartDeactivate() {
+        core.onPartDeactivate();
+        base.onPartDeactivate();
+    }
+
+    protected override void onPartDelete() {
+        core.onPartDelete();
+        base.onPartDelete();
+    }
+
+    protected override void onPartExplode() {
+        core.onPartExplode();
+        base.onPartExplode();
+    }
+
+    protected override void onPartLiftOff() {
+        core.onPartLiftOff();
+        base.onPartLiftOff();
+    }
+
+    protected override void onPartLoad() {
+        core.onPartLoad();
+        base.onPartLoad();
+    }
+
+    protected override void onPartSplashdown() {
+        core.onPartSplashdown();
+        base.onPartSplashdown();
+    }
+
+    protected override void onPartTouchdown() {
+        core.onPartTouchdown();
+        base.onPartTouchdown();
+    }
+
+    protected override void onUnpack() {
+        core.onUnpack();
+        base.onUnpack();
     }
 }

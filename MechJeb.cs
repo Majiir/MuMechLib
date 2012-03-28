@@ -173,4 +173,79 @@ class MuMechJeb : MuMechPart {
         core.onGameResume();
         base.onGameResume();
     }
+
+    protected override void onActiveFixedUpdate() {
+        core.onActiveFixedUpdate();
+        base.onActiveFixedUpdate();
+    }
+
+    protected override void onActiveUpdate() {
+        core.onActiveUpdate();
+        base.onActiveUpdate();
+    }
+
+    public override void onBackup() {
+        core.onBackup();
+        base.onBackup();
+    }
+
+    protected override void onDecouple(float breakForce) {
+        core.onDecouple(breakForce);
+        base.onDecouple(breakForce);
+    }
+
+    protected override void onFlightStartAtLaunchPad() {
+        core.onFlightStartAtLaunchPad();
+        base.onFlightStartAtLaunchPad();
+    }
+
+    protected override void onPack() {
+        core.onPack();
+        base.onPack();
+    }
+
+    protected override bool onPartActivate() {
+        core.onPartActivate();
+        return base.onPartActivate();
+    }
+
+    protected override void onPartDeactivate() {
+        core.onPartDeactivate();
+        base.onPartDeactivate();
+    }
+
+    protected override void onPartDelete() {
+        core.onPartDelete();
+        base.onPartDelete();
+    }
+
+    protected override void onPartExplode() {
+        core.onPartExplode();
+        base.onPartExplode();
+    }
+
+    protected override void onPartLiftOff() {
+        core.onPartLiftOff();
+        base.onPartLiftOff();
+    }
+
+    protected override void onPartLoad() {
+        core.onPartLoad();
+        base.onPartLoad();
+    }
+
+    protected override void onPartSplashdown() {
+        core.onPartSplashdown();
+        base.onPartSplashdown();
+    }
+
+    protected override void onPartTouchdown() {
+        core.onPartTouchdown();
+        base.onPartTouchdown();
+    }
+
+    protected override void onUnpack() {
+        core.onUnpack();
+        base.onUnpack();
+    }
 }
