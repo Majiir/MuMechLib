@@ -12,11 +12,13 @@ namespace MuMech {
     }
 
     class MechJebCore {
-        public enum RotationReference {
-            INERTIAL,
-            ORBIT,
-            SURFACE,
-            TARGET
+        public enum AttitudeReference {
+            INERTIAL,          //world coordinate system.
+            ORBIT,             //forward = prograde, left = normal plus, up = radial plus
+            ORBIT_HORIZONTAL,  //forward = surface projection of orbit velocity, up = surface normal
+            SURFACE_NORTH,     //forward = north, left = west, up = surface normal
+            SURFACE_VELOCITY,  //forward = surface frame vessel velocity, up = perpendicular component of surface normal
+            TARGET             //forward = toward target, up = perpendicular component of vessel heading
         }
 
         public enum TargetType {
@@ -29,7 +31,8 @@ namespace MuMech {
             OFF,
             KEEP_ORBITAL,
             KEEP_SURFACE,
-            KEEP_VERTICAL
+            KEEP_VERTICAL,
+            DIRECT
         }
 
         public enum WindowStat {
@@ -58,6 +61,13 @@ namespace MuMech {
         public static Dictionary<Vessel, VesselStateKeeper> allJebs = new Dictionary<Vessel, VesselStateKeeper>();
 
         public List<ComputerModule> modules = new List<ComputerModule>();
+
+        protected ComputerModule _controlModule = null;
+        public ComputerModule controlModule {
+            get {
+                return _controlModule;
+            }
+        }
 
         public VesselState vesselState;
 
@@ -103,45 +113,54 @@ namespace MuMech {
         public bool trans_land = false;
         public bool trans_land_gears = false;
 
-        public Quaternion internal_target = Quaternion.identity;
+        public bool liftedOff = true;
 
-        protected bool rotationChanged = false;
-        protected bool _rotationActive = false;
-        public bool rotationActive {
+        public bool attitudeKILLROT = false;
+
+        protected bool attitudeChanged = false;
+        protected bool _attitudeActive = false;
+        public bool attitudeActive {
             get {
-                return _rotationActive;
+                return _attitudeActive;
+            }
+        }
+
+        protected AttitudeReference _oldAttitudeReference = AttitudeReference.INERTIAL;
+        protected AttitudeReference _attitudeReference = AttitudeReference.INERTIAL;
+        public AttitudeReference attitudeReference {
+            get {
+                return _attitudeReference;
             }
             set {
-                if (_rotationActive != value) {
-                    _rotationActive = value;
-                    rotationChanged = true;
+                if (_attitudeReference != value) {
+                    _oldAttitudeReference = _attitudeReference;
+                    _attitudeReference = value;
+                    attitudeChanged = true;
                 }
             }
         }
 
-        protected RotationReference _rotationReference = RotationReference.INERTIAL;
-        public RotationReference rotationReference {
+        protected Quaternion _oldAttitudeTarget = Quaternion.identity;
+        protected Quaternion _lastAttitudeTarget = Quaternion.identity;
+        protected Quaternion _attitudeTarget = Quaternion.identity;
+        public Quaternion attitudeTarget {
             get {
-                return _rotationReference;
+                return _attitudeTarget;
             }
             set {
-                if (_rotationReference != value) {
-                    _rotationReference = value;
-                    rotationChanged = true;
+                if (Math.Abs(Vector3d.Angle(_lastAttitudeTarget * Vector3d.forward, value * Vector3d.forward)) > 10) {
+                    _oldAttitudeTarget = _attitudeTarget;
+                    _lastAttitudeTarget = value;
+                    attitudeChanged = true;
                 }
+                _attitudeTarget = value;
             }
         }
 
-        protected Quaternion _rotationTarget = Quaternion.identity;
-        public Quaternion rotationTarget {
+        protected bool _attitudeRollMatters = false;
+        public bool attitudeRollMatters {
             get {
-                return _rotationTarget;
-            }
-            set {
-                if (Mathf.Abs(Quaternion.Angle(_rotationTarget, value)) > 10) {
-                    rotationChanged = true;
-                }
-                _rotationTarget = value;
+                return _attitudeRollMatters;
             }
         }
 
@@ -155,8 +174,8 @@ namespace MuMech {
                 if (_targetType != value) {
                     _targetType = value;
                     targetChanged = true;
-                    if (rotationReference == RotationReference.TARGET) {
-                        rotationChanged = true;
+                    if (attitudeReference == AttitudeReference.TARGET) {
+                        attitudeChanged = true;
                     }
                 }
             }
@@ -172,8 +191,8 @@ namespace MuMech {
                     _targetVessel = value;
                     if (targetType == TargetType.VESSEL) {
                         targetChanged = true;
-                        if (rotationReference == RotationReference.TARGET) {
-                            rotationChanged = true;
+                        if (attitudeReference == AttitudeReference.TARGET) {
+                            attitudeChanged = true;
                         }
                     }
                 }
@@ -190,8 +209,8 @@ namespace MuMech {
                     _targetBody = value;
                     if (targetType == TargetType.BODY) {
                         targetChanged = true;
-                        if (rotationReference == RotationReference.TARGET) {
-                            rotationChanged = true;
+                        if (attitudeReference == AttitudeReference.TARGET) {
+                            attitudeChanged = true;
                         }
                     }
                 }
@@ -282,16 +301,49 @@ namespace MuMech {
             drive(s);
         }
 
-        public Quaternion rotationGetReferenceRotation(RotationReference reference) {
+        public bool controlClaim(ComputerModule newController, bool force = false) {
+            if (controlModule == newController) {
+                return true;
+            }
+            if (!controlRelease(newController, force)) {
+                return false;
+            }
+
+            _controlModule = newController;
+
+            return true;
+        }
+
+        public bool controlRelease(ComputerModule controller, bool force = false) {
+            if (controlModule != null) {
+                controlModule.onControlLost();
+            }
+
+            _controlModule = null;
+
+            attitudeDeactivate(controller);
+            landDeactivate(controller);
+            tmode = TMode.OFF;
+
+            return true;
+        }
+
+        public Quaternion attitudeGetReferenceRotation(AttitudeReference reference) {
             Quaternion rotRef = Quaternion.identity;
             switch (reference) {
-                case RotationReference.ORBIT:
+                case AttitudeReference.ORBIT:
                     rotRef = Quaternion.LookRotation(vesselState.velocityVesselOrbitUnit, vesselState.up);
                     break;
-                case RotationReference.SURFACE:
+                case AttitudeReference.ORBIT_HORIZONTAL:
+                    rotRef = Quaternion.LookRotation(Vector3d.Exclude(vesselState.up, vesselState.velocityVesselOrbitUnit), vesselState.up);
+                    break;
+                case AttitudeReference.SURFACE_NORTH:
                     rotRef = vesselState.rotationSurface;
                     break;
-                case RotationReference.TARGET:
+                case AttitudeReference.SURFACE_VELOCITY:
+                    rotRef = Quaternion.LookRotation(vesselState.velocityVesselSurfaceUnit, vesselState.up);
+                    break;
+                case AttitudeReference.TARGET:
                     switch (targetType) {
                         case TargetType.VESSEL:
                             rotRef = Quaternion.LookRotation((targetVessel.findWorldCenterOfMass() - vesselState.CoM).normalized, -part.vessel.transform.forward);
@@ -305,22 +357,53 @@ namespace MuMech {
             return rotRef;
         }
 
-        public Vector3d rotationWorldToReference(Vector3d vector, RotationReference reference) {
-            return Quaternion.Inverse(rotationGetReferenceRotation(reference)) * vector;
+        public Vector3d attitudeWorldToReference(Vector3d vector, AttitudeReference reference) {
+            return Quaternion.Inverse(attitudeGetReferenceRotation(reference)) * vector;
         }
 
-        public Vector3d rotationReferenceToWorld(Vector3d vector, RotationReference reference) {
-            return rotationGetReferenceRotation(reference) * vector;
+        public Vector3d attitudeReferenceToWorld(Vector3d vector, AttitudeReference reference) {
+            return attitudeGetReferenceRotation(reference) * vector;
         }
 
-        public void rotateTo(Quaternion rotation, RotationReference reference) {
-            rotationReference = reference;
-            rotationTarget = rotation;
-            rotationActive = true;
+        public bool attitudeTo(Quaternion attitude, AttitudeReference reference, ComputerModule controller) {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller)) {
+                return false;
+            }
+
+            attitudeReference = reference;
+            attitudeTarget = attitude;
+            _attitudeActive = true;
+            _attitudeRollMatters = true;
+
+            return true;
         }
 
-        public void rotateTo(Vector3d direction, RotationReference reference) {
-            rotateTo(Quaternion.LookRotation(direction, rotationWorldToReference(-part.vessel.transform.forward, reference)), reference);
+        public bool attitudeTo(Vector3d direction, AttitudeReference reference, ComputerModule controller) {
+            bool ok = false;
+            double ang_diff = Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, attitudeGetReferenceRotation(reference) * direction));
+            if (!attitudeActive || (ang_diff > 45)) {
+                ok = attitudeTo(Quaternion.LookRotation(direction, attitudeWorldToReference(-part.vessel.transform.forward, reference)), reference, controller);
+            } else {
+                ok = attitudeTo(Quaternion.LookRotation(direction, attitudeWorldToReference(attitudeReferenceToWorld(attitudeTarget * Vector3d.up, attitudeReference), reference)), reference, controller);
+            }
+            if (ok) {
+                _attitudeRollMatters = false;
+                return true;
+            } else {
+                return false;
+            }
+
+        }
+
+        public bool attitudeDeactivate(ComputerModule controller) {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller)) {
+                return false;
+            }
+
+            _attitudeActive = false;
+            attitudeChanged = true;
+
+            return true;
         }
 
         public void setTarget(Vessel target) {
@@ -333,6 +416,35 @@ namespace MuMech {
             targetType = TargetType.BODY;
         }
 
+        public bool landActivate(ComputerModule controller) {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller)) {
+                return false;
+            }
+            if (trans_land) {
+                return true;
+            }
+
+            trans_land = true;
+            trans_land_gears = false;
+            tmode = TMode.KEEP_VERTICAL;
+
+            return true;
+        }
+
+        public bool landDeactivate(ComputerModule controller) {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller)) {
+                return false;
+            }
+            if (!trans_land) {
+                return true;
+            }
+
+            trans_land = false;
+            tmode = TMode.OFF;
+
+            return true;
+        }
+
         private void drive(FlightCtrlState s) {
             stress = 0;
 
@@ -340,9 +452,11 @@ namespace MuMech {
                 return;
             }
 
-            foreach (ComputerModule module in modules) {
-                if (module.enabled) {
-                    module.drive(s);
+            if (controlModule != null) {
+                if (controlModule.enabled) {
+                    controlModule.drive(s);
+                } else {
+                    _controlModule = null;
                 }
             }
 
@@ -350,9 +464,8 @@ namespace MuMech {
                 return;
             }
 
-            if (tmode != TMode.OFF) {
+            if ((tmode != TMode.OFF) && (vesselState.thrustAvailable > 0)) {
                 double spd = 0;
-                bool fullBlast = false;
 
                 if (trans_land) {
                     if (part.vessel.Landed || part.vessel.Splashed) {
@@ -362,7 +475,7 @@ namespace MuMech {
                         tmode = TMode.KEEP_VERTICAL;
                         trans_kill_h = true;
                         double minalt = Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue);
-                        trans_spd_act = (float)-Math.Sqrt((vesselState.thrustAvailable / vesselState.mass - vesselState.gravityForce.magnitude) * 2 * minalt) * 0.50F;
+                        trans_spd_act = (float)-Math.Sqrt((vesselState.maxThrustAccel - vesselState.gravityForce.magnitude) * 2 * minalt) * 0.50F;
                         if (!trans_land_gears && (minalt < 1000)) {
                             foreach (Part p in part.vessel.parts) {
                                 if (p is LandingLeg) {
@@ -376,12 +489,12 @@ namespace MuMech {
                             trans_land_gears = true;
                         }
                         if (minalt < 200) {
-                            trans_spd_act = -Mathf.Lerp(0, (float)Math.Sqrt((vesselState.thrustAvailable / vesselState.mass - vesselState.gravityForce.magnitude) * 2 * 200) * 0.50F, (float)minalt / 200);
+                            trans_spd_act = -Mathf.Lerp(0, (float)Math.Sqrt((vesselState.maxThrustAccel - vesselState.gravityForce.magnitude) * 2 * 200) * 0.50F, (float)minalt / 200);
                             /*
                             if ((minalt >= 90) && (vesselState.speedHorizontal > 1)) {
-                                trans_spd_act = -Mathf.Lerp(0, (float)Math.Sqrt((vesselState.thrustAvailable / vesselState.mass - vesselState.gravityForce.magnitude) * 2 * 200) * 0.90F, (float)(minalt - 100) / 300);
+                                trans_spd_act = -Mathf.Lerp(0, (float)Math.Sqrt((vesselState.maxThrustAccel - vesselState.gravityForce.magnitude) * 2 * 200) * 0.90F, (float)(minalt - 100) / 300);
                             } else {
-                                trans_spd_act = -Mathf.Lerp(0, (float)Math.Sqrt((vesselState.thrustAvailable / vesselState.mass - vesselState.gravityForce.magnitude) * 2 * 200) * 0.90F, (float)minalt / 300);
+                                trans_spd_act = -Mathf.Lerp(0, (float)Math.Sqrt((vesselState.maxThrustAccel - vesselState.gravityForce.magnitude) * 2 * 200) * 0.90F, (float)minalt / 300);
                             }
                             */
                         }
@@ -401,29 +514,29 @@ namespace MuMech {
                         if (trans_kill_h) {
                             Vector3 hsdir = Vector3.Exclude(vesselState.up, part.vessel.orbit.GetVel() - part.vessel.mainBody.getRFrmVel(vesselState.CoM));
                             Vector3 dir = -hsdir + vesselState.up * Math.Max(Math.Abs(spd), 20 * part.vessel.mainBody.GeeASL);
-                            if (hsdir.magnitude > Math.Max(Math.Abs(spd), 100 * part.vessel.mainBody.GeeASL) * 2) {
-                                fullBlast = true;
+                            if ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) > 5000) && (hsdir.magnitude > Math.Max(Math.Abs(spd), 100 * part.vessel.mainBody.GeeASL) * 2)) {
+                                tmode = TMode.DIRECT;
+                                trans_spd_act = 100;
                                 rot = -hsdir;
                             } else {
                                 rot = dir.normalized;
                             }
-                        } else {
-                            rot = vesselState.up;
+                            attitudeTo(rot, AttitudeReference.INERTIAL, null);
                         }
-                        rotateTo(rot, RotationReference.INERTIAL);
                         break;
                 }
 
-                double t_err = (trans_spd_act - spd) / (vesselState.thrustAvailable / vesselState.mass);
+                double t_err = (trans_spd_act - spd) / vesselState.maxThrustAccel;
                 t_integral += t_err * TimeWarp.fixedDeltaTime;
                 double t_deriv = (t_err - t_prev_err) / TimeWarp.fixedDeltaTime;
                 double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
                 t_prev_err = t_err;
 
-                double int_error = Mathf.Abs(Quaternion.Angle(rotationGetReferenceRotation(rotationReference) * rotationTarget, part.vessel.transform.rotation * Quaternion.Euler(-90, 0, 0)));
-                if ((tmode != TMode.KEEP_VERTICAL) || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 45))) {
-                    if (fullBlast) {
-                        trans_prev_thrust = s.mainThrottle = 1;
+                double int_error = Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward));
+                //print("int_error = " + int_error);
+                if ((tmode != TMode.KEEP_VERTICAL) || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 90))) {
+                    if (tmode == TMode.DIRECT) {
+                        trans_prev_thrust = s.mainThrottle = trans_spd_act / 100.0F;
                     } else {
                         trans_prev_thrust = s.mainThrottle = Mathf.Clamp(trans_prev_thrust + (float)t_act, 0, 1.0F);
                     }
@@ -436,12 +549,12 @@ namespace MuMech {
                 }
             }
 
-            if (rotationActive) {
-                int userCommanding = (Mathfx.Approx(s.pitch, 0, 0.1F) ? 0 : 1) + (Mathfx.Approx(s.roll, 0, 0.1F) ? 0 : 2) + (Mathfx.Approx(s.yaw, 0, 0.1F) ? 0 : 4);
+            if (attitudeActive) {
+                int userCommanding = (Mathfx.Approx(s.pitch, 0, 0.1F) ? 0 : 1) + (Mathfx.Approx(s.yaw, 0, 0.1F) ? 0 : 2) + (Mathfx.Approx(s.roll, 0, 0.1F) ? 0 : 4);
 
                 s.killRot = false;
 
-                Quaternion target = rotationGetReferenceRotation(rotationReference) * rotationTarget;
+                Quaternion target = attitudeGetReferenceRotation(attitudeReference) * attitudeTarget;
                 Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * target);
                 if (Mathf.Abs(Quaternion.Angle(delta, Quaternion.identity)) > 30) {
                     delta = Quaternion.Slerp(Quaternion.identity, delta, 0.1F);
@@ -456,14 +569,33 @@ namespace MuMech {
                 prev_err = err;
 
                 if (userCommanding != 0) {
-                    prev_err = Vector3d.zero;
-                    integral = Vector3d.zero;
+                    if (attitudeKILLROT) {
+                        attitudeTo(Quaternion.LookRotation(part.vessel.transform.up, -part.vessel.transform.forward), AttitudeReference.INERTIAL, null);
+                    }
+                }
+                if ((userCommanding & 4) > 0) {
+                    prev_err = new Vector3d(prev_err.x, prev_err.y, 0);
+                    integral = new Vector3d(integral.x, integral.y, 0);
+                    if (!attitudeRollMatters) {
+                        attitudeTo(Quaternion.LookRotation(attitudeTarget * Vector3d.forward, attitudeWorldToReference(-part.vessel.transform.forward, attitudeReference)), attitudeReference, null);
+                        _attitudeRollMatters = false;
+                    }
                 } else {
                     if (!double.IsNaN(act.z)) s.roll = Mathf.Clamp(s.roll + act.z, -1.0F, 1.0F);
+                }
+                if ((userCommanding & 3) > 0) {
+                    prev_err = new Vector3d(0, 0, prev_err.z);
+                    integral = new Vector3d(0, 0, integral.z);
+                } else {
                     if (!double.IsNaN(act.x)) s.pitch = Mathf.Clamp(s.pitch + act.x, -1.0F, 1.0F);
                     if (!double.IsNaN(act.y)) s.yaw = Mathf.Clamp(s.yaw - act.y, -1.0F, 1.0F);
-                    stress = Mathf.Min(Mathf.Abs(act.x), 1.0F) + Mathf.Min(Mathf.Abs(act.y), 1.0F) + Mathf.Min(Mathf.Abs(act.z), 1.0F);
                 }
+                stress = Mathf.Min(Mathf.Abs(act.x), 1.0F) + Mathf.Min(Mathf.Abs(act.y), 1.0F) + Mathf.Min(Mathf.Abs(act.z), 1.0F);
+            }
+
+            if (double.IsNaN(s.mainThrottle)) {
+                print("MechJeb: caught throttle = NaN");
+                s.mainThrottle = 0;
             }
         }
 
@@ -471,9 +603,11 @@ namespace MuMech {
             GUILayout.BeginVertical();
 
             foreach (ComputerModule module in modules) {
-                bool on = module.enabled;
-                if (on != GUILayout.Toggle(on, module.getName())) {
-                    module.enabled = !on;
+                if (!module.hidden) {
+                    bool on = module.enabled;
+                    if (on != GUILayout.Toggle(on, module.getName())) {
+                        module.enabled = !on;
+                    }
                 }
             }
 
@@ -546,8 +680,10 @@ namespace MuMech {
             modules.Add(new MechJebModuleTranslatron(this));
             modules.Add(new MechJebModuleOrbitInfo(this));
             modules.Add(new MechJebModuleSurfaceInfo(this));
-            modules.Add(new ReentryComputer(this));
-            modules.Add(new AscentAutopilot(this));
+            modules.Add(new MechJebModuleLandingAutopilot(this));
+            modules.Add(new MechJebModuleAscentAutopilot(this));
+
+            modules.Add(new MechJebModuleJoke(this));
 
             //modules.Add(new MechJebModuleAscension(this));
             //modules.Add(new MechJebModuleOrbitOper(this));
@@ -565,6 +701,10 @@ namespace MuMech {
 
             FlightInputHandler.OnFlyByWire += new FlightInputHandler.FlightInputCallback(onFlyByWire);
             flyByWire = true;
+
+            attitudeTo(Quaternion.LookRotation(part.vessel.transform.up, -part.vessel.transform.forward), MechJebCore.AttitudeReference.INERTIAL, null);
+            _attitudeActive = false;
+            attitudeChanged = false;
 
             foreach (ComputerModule module in modules) {
                 module.onFlightStart();
@@ -630,6 +770,13 @@ namespace MuMech {
                     module.onPartFixedUpdate();
                 }
 
+                if (!liftedOff && (FlightGlobals.ActiveVessel == part.vessel) && (Staging.CurrentStage <= Staging.LastStage)) {
+                    foreach (ComputerModule module in modules) {
+                        module.onLiftOff();
+                    }
+                    liftedOff = true;
+                }
+
                 if (part.vessel != FlightGlobals.ActiveVessel) {
                     FlightCtrlState s = new FlightCtrlState();
                     drive(s);
@@ -662,8 +809,9 @@ namespace MuMech {
             }
 
             if (tmode_changed) {
-                if (prev_tmode == TMode.KEEP_VERTICAL) {
-                    rotationActive = false;
+                if (trans_kill_h && (tmode == TMode.OFF)) {
+                    _attitudeActive = false;
+                    attitudeChanged = true;
                     trans_land = false;
                 }
                 t_integral = 0;
@@ -672,12 +820,20 @@ namespace MuMech {
                 FlightInputHandler.SetNeutralControls();
             }
 
-            if (rotationChanged) {
+            if (attitudeChanged) {
+                if (attitudeReference != AttitudeReference.INERTIAL) {
+                    attitudeKILLROT = false;
+                }
                 integral = Vector3.zero;
                 prev_err = Vector3.zero;
                 act = Vector3.zero;
+
                 print("MechJeb resetting PID controller.");
-                rotationChanged = false;
+                attitudeChanged = false;
+
+                foreach (ComputerModule module in modules) {
+                    module.onAttitudeChange(_oldAttitudeReference, _oldAttitudeTarget, attitudeReference, attitudeTarget);
+                }
             }
 
             if (calibrationMode) {
@@ -897,6 +1053,8 @@ namespace MuMech {
         }
 
         public void onFlightStartAtLaunchPad() {
+            liftedOff = false;
+
             foreach (ComputerModule module in modules) {
                 module.onFlightStartAtLaunchPad();
             }

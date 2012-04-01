@@ -19,8 +19,7 @@ namespace MuMech {
             NORMAL_MINUS,
             RADIAL_PLUS,
             RADIAL_MINUS,
-            STANDBY,
-            INTERNAL
+            AUTO
         }
 
         private bool mode_changed = false;
@@ -84,15 +83,16 @@ namespace MuMech {
 
             GUILayout.BeginVertical();
 
-            if (mode == Mode.OFF) {
-                if (GUILayout.Button("ON", sty, GUILayout.ExpandWidth(true))) {
-                    mode = Mode.STANDBY;
-                }
-            } else if (mode == Mode.INTERNAL) {
+            if ((core.controlModule != null) || core.trans_land || ((core.tmode == MechJebCore.TMode.KEEP_VERTICAL) && core.trans_kill_h)) {
+                mode = Mode.AUTO;
                 sty.normal.textColor = Color.red;
                 sty.onActive = sty.onFocused = sty.onHover = sty.onNormal = sty.active = sty.focused = sty.hover = sty.normal;
                 GUILayout.Button("AUTO", sty, GUILayout.ExpandWidth(true));
             } else {
+                if (mode == Mode.AUTO) {
+                    mode = Mode.OFF;
+                }
+
                 if (GUILayout.Button("OFF", sty, GUILayout.ExpandWidth(true))) {
                     mode = Mode.OFF;
                     windowPos = new Rect(windowPos.x, windowPos.y, 10, 10);
@@ -173,6 +173,14 @@ namespace MuMech {
             base.WindowGUI(windowID);
         }
 
+        public override void onAttitudeChange(MechJebCore.AttitudeReference oldReference, Quaternion oldTarget, MechJebCore.AttitudeReference newReference, Quaternion newTarget) {
+            if (!core.attitudeActive && ((mode != Mode.SURFACE) || srf_act)) {
+                mode = Mode.OFF;
+            }
+
+            base.onAttitudeChange(oldReference, oldTarget, newReference, newTarget);
+        }
+
         public override void onPartUpdate() {
             if (mode_changed) {
                 windowPos = new Rect(windowPos.x, windowPos.y, 10, 10);
@@ -181,36 +189,37 @@ namespace MuMech {
                     srf_act = false;
                 }
 
-                if (((mode != Mode.OFF) && (mode != Mode.STANDBY)) || ((mode == Mode.SURFACE) && (srf_act))) {
+                if (((mode != Mode.OFF) && (mode != Mode.SURFACE)) || ((mode == Mode.SURFACE) && (srf_act))) {
                     switch (mode) {
                         case Mode.KILLROT:
-                            core.rotateTo(part.vessel.transform.up, MechJebCore.RotationReference.INERTIAL);
+                            core.attitudeKILLROT = true;
+                            core.attitudeTo(Quaternion.LookRotation(part.vessel.transform.up, -part.vessel.transform.forward), MechJebCore.AttitudeReference.INERTIAL, this);
                             break;
                         case Mode.SURFACE:
                             Quaternion r = Quaternion.AngleAxis(srf_act_hdg, Vector3.up) * Quaternion.AngleAxis(-srf_act_pit, Vector3.right);
-                            core.rotateTo(r, MechJebCore.RotationReference.SURFACE);
+                            core.attitudeTo(r * Vector3d.forward, MechJebCore.AttitudeReference.SURFACE_NORTH, this);
                             break;
                         case Mode.PROGRADE:
-                            core.rotateTo(Vector3d.forward, MechJebCore.RotationReference.ORBIT);
+                            core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
                             break;
                         case Mode.RETROGRADE:
-                            core.rotateTo(Vector3d.back, MechJebCore.RotationReference.ORBIT);
+                            core.attitudeTo(Vector3d.back, MechJebCore.AttitudeReference.ORBIT, this);
                             break;
                         case Mode.NORMAL_PLUS:
-                            core.rotateTo(Vector3d.left, MechJebCore.RotationReference.ORBIT);
+                            core.attitudeTo(Vector3d.left, MechJebCore.AttitudeReference.ORBIT, this);
                             break;
                         case Mode.NORMAL_MINUS:
-                            core.rotateTo(Vector3d.right, MechJebCore.RotationReference.ORBIT);
+                            core.attitudeTo(Vector3d.right, MechJebCore.AttitudeReference.ORBIT, this);
                             break;
                         case Mode.RADIAL_PLUS:
-                            core.rotateTo(Vector3d.up, MechJebCore.RotationReference.ORBIT);
+                            core.attitudeTo(Vector3d.up, MechJebCore.AttitudeReference.ORBIT, this);
                             break;
                         case Mode.RADIAL_MINUS:
-                            core.rotateTo(Vector3d.down, MechJebCore.RotationReference.ORBIT);
+                            core.attitudeTo(Vector3d.down, MechJebCore.AttitudeReference.ORBIT, this);
                             break;
                     }
                 } else {
-                    core.rotationActive = false;
+                    core.attitudeDeactivate(this);
                 }
 
                 mode_changed = false;

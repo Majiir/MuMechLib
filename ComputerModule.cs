@@ -41,6 +41,8 @@ namespace MuMech {
             }
         }
 
+        public bool hidden = false;
+
         public ComputerModule(MechJebCore core) {
             this.core = core;
             part = core.part;
@@ -51,6 +53,15 @@ namespace MuMech {
         }
 
         public virtual void onModuleDisabled() {
+        }
+
+        public virtual void onControlLost() {
+        }
+
+        public virtual void onAttitudeChange(MechJebCore.AttitudeReference oldReference, Quaternion oldTarget, MechJebCore.AttitudeReference newReference, Quaternion newTarget) {
+        }
+
+        public virtual void onLiftOff() {
         }
 
         public virtual void onActiveFixedUpdate() {
@@ -160,6 +171,10 @@ namespace MuMech {
 
         public virtual String getName() {
             return "Computer Module";
+        }
+
+        protected void print(String s) {
+            MonoBehaviour.print(s);
         }
     }
 }

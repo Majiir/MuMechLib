@@ -40,11 +40,6 @@ namespace MuMech
             double eccentricAnomaly = eccentricAnomalyFromMeanAnomaly(meanAnomaly);
             double trueAnomaly = trueAnomalyFromEccentricAnomaly(eccentricAnomaly, meanAnomaly);
             Vector3d ret = positionAtTrueAnomaly(trueAnomaly);
-            //print("positionAtTime:");
-            //print("meanAnomaly = " + meanAnomaly);
-            //print("eccentricAnomaly = " + eccentricAnomaly);
-            //print("trueAnomaly = " + trueAnomaly);
-            //print("position = " + ret);
             return ret;
         }
 
@@ -56,7 +51,7 @@ namespace MuMech
             Vector3d pos = positionAtTrueAnomaly(trueAnomaly);
 
             double kineticEnergy = energy + GM / (pos - referenceBody.position).magnitude;
-            double speed = Math.Sqrt(2 * kineticEnergy);
+            double speed = Math.Sqrt(2 * Math.Abs(kineticEnergy)); //abs in case precision errors make this negative
 
             double angleFromHorizontal = Math.Atan(eccentricity * Math.Sin(trueAnomaly) / (1 + eccentricity * Math.Cos(trueAnomaly)));
 
@@ -64,6 +59,10 @@ namespace MuMech
             Vector3d horizontalUnit = Vector3d.Cross(angularMomentum, upUnit).normalized;
 
             Vector3d vel = speed * (Math.Cos(angleFromHorizontal) * horizontalUnit + Math.Sin(angleFromHorizontal) * upUnit);
+
+            if(double.IsNaN(vel.x)) {
+                print("AROrbit: velocityAtTime returning NaN!!!");
+            }
 
             return vel;
         }
@@ -145,25 +144,21 @@ namespace MuMech
 
             if (eccentricity < 1.0)
             {
-                //print("elliptic iteration");
-
                 double error = current - eccentricity * Math.Sin(current) - meanAnomaly;
                 while (Math.Abs(error) > threshold)
                 {
                     numIters += 1;
                     current -= error / (1 - eccentricity * Math.Cos(current));
                     error = current - eccentricity * Math.Sin(current) - meanAnomaly;
-                    if (numIters > 100)
+                    if (numIters > 100000)
                     {
-                        print("AROrbit kepler solver (A) failed to converge!!");
+                        print("AROrbit: kepler solver (A) failed to converge!! (meanAnomaly = " + meanAnomaly + ")");
                         break;
                     }
                 }
             }
             else
             {
-                //print("hyperbolic iteration");
-
                 double error = eccentricity * Math.Sinh(current) - current - meanAnomaly;
                 while (Math.Abs(error) > threshold)
                 {
@@ -171,15 +166,13 @@ namespace MuMech
                     current -= error / (eccentricity * Math.Cosh(current) - 1.0);
                     error = eccentricity * Math.Sinh(current) - current - meanAnomaly;
 
-                    if (numIters > 100)
+                    if (numIters > 100000)
                     {
-                        print("AROrbit kepler solver (B) failed to converge!!");
+                        print("AROrbit: kepler solver (B) failed to converge!! (meanAnomaly = " + meanAnomaly + ")");
                         break;
                     }
                 }
             }
-
-            //print("converged after " + numIters + " iterations");
 
             return (negative ? -current : current);
         }
@@ -209,18 +202,9 @@ namespace MuMech
             }
         }
 
-        /*    public Vector3d positionAtPeriapsis()
-            {
-                double trueAnomaly = 0;
-                return positionAtTrueAnomaly(trueAnomaly);
-            }*/
-
-
 
         public AROrbit(Vector3d pos, Vector3d vel, double time, CelestialBody body)
         {
-            //        print("building AROrbit");
-
             referenceBody = body;
             Vector3d radialVector = pos - body.position;      //radial vector from planet center to pos
             angularMomentum = Vector3d.Cross(radialVector, vel);   //angular momentum per unit mass
@@ -230,19 +214,9 @@ namespace MuMech
 
             hyperbolic = (eccentricity > 1.0);
 
-            //        print("radialVector = " + (Vector3d)radialVector);
-            //        print("angularMomentum = " + (Vector3d)angularMomentum);
-            //        print("GM = " + GM);
-            //        print("energy = " + energy);
-            //        print("eccentricity = " + eccentricity);
-
             Vector3d rungeLenz = Vector3d.Cross(vel, angularMomentum) - GM * radialVector.normalized;
             unitTowardPeriapsis = rungeLenz.normalized;
             unitNormalToPeriapsis = Vector3d.Cross(angularMomentum, unitTowardPeriapsis).normalized;
-
-            //        print("rungeLenz = " + (Vector3d)rungeLenz);
-            //        print("unitTowardApoapsis = " + (Vector3d)unitTowardPeriapsis);
-            //        print("unitNormalToApoapsis = " + (Vector3d)unitNormalToPeriapsis);
 
             double trueAnomaly = Math.Atan2(Vector3d.Dot(radialVector, unitNormalToPeriapsis),
                                             Vector3d.Dot(radialVector, unitTowardPeriapsis));
@@ -250,29 +224,21 @@ namespace MuMech
             {
                 double eccentricAnomaly = Math.Acos((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
                 if (Vector3d.Dot(vel, radialVector) < 0) eccentricAnomaly = 2 * Math.PI - eccentricAnomaly;
-                //            print("eccentricAnomaly = " + eccentricAnomaly);
                 meanAnomalyAtReferenceTime = eccentricAnomaly - eccentricity * Math.Sin(eccentricAnomaly);
             }
             else
             {
                 double eccentricAnomaly = Acosh((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
                 if (Vector3d.Dot(vel, radialVector) < 0) eccentricAnomaly = -eccentricAnomaly;
-                //            print("eccentricAnomaly = " + eccentricAnomaly);
                 meanAnomalyAtReferenceTime = eccentricity * Math.Sinh(eccentricAnomaly) - eccentricAnomaly;
             }
 
             referenceTime = time;
 
-            //        print("trueAnomaly = " + trueAnomaly);
-            //        print("meanAnomalyAtReferenceTime = " + meanAnomalyAtReferenceTime);
-            //        print("referenceTime = " + referenceTime);
-
             semiMajorAxis = -0.5 * GM / energy;
 
             meanMotion = Math.Sqrt(GM / Math.Pow(Math.Abs(semiMajorAxis), 3));
 
-            //        print("semiMajorAxis = " + semiMajorAxis);
-            //        print("meanMotion = " + meanMotion);
         }
 
         static double Asinh(double x)

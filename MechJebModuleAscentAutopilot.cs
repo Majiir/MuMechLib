@@ -9,24 +9,68 @@ using UnityEngine;
 namespace MuMech
 {
 
-    class AscentAutopilot : ComputerModule
+    class MechJebModuleAscentAutopilot : ComputerModule
     {
-        public AscentAutopilot(MechJebCore core) : base(core) { }
+        public MechJebModuleAscentAutopilot(MechJebCore core) : base(core) { }
 
-        public override void onModuleDisabled() {
-             mode = DISENGAGED;
-             FlightInputHandler.SetNeutralControls(); //makes sure we leave throttle at zero
+        public override void onModuleDisabled()
+        {
+            turnOffSteering();
         }
 
+        public override void onControlLost()
+        {
+            turnOffSteering();
+        }
+
+        void turnOffSteering()
+        {
+            if (mode != AscentMode.DISENGAGED)
+            {
+                if (mode != AscentMode.ON_PAD)
+                {
+                    FlightInputHandler.SetNeutralControls(); //makes sure we leave throttle at zero
+                }
+                mode = AscentMode.DISENGAGED;
+                core.attitudeDeactivate(this);
+            }
+        }
+
+        public const double BEACH_ALTITUDE = 100001.6;
+        public const double BEACH_INCLINATION = 24.0;
+
+        //programmatic interface to the module. 
+        public void launchTo(double orbitAltitude, double orbitInclination)
+        {
+            this.enabled = true;
+            core.controlClaim(this);
+            desiredOrbitRadius = part.vessel.mainBody.Radius + orbitAltitude;
+            desiredInclination = orbitInclination;
+
+            if (orbitAltitude == BEACH_ALTITUDE && orbitInclination == BEACH_INCLINATION)
+            {
+                desiredOrbitAltitudeKmString = "the";
+                desiredInclinationString = "beach";
+            }
+
+            //lift off if we haven't yet:
+            if (Staging.CurrentStage == Staging.StageCount)
+            {
+                Staging.ActivateNextStage();
+            }
+
+            mode = AscentMode.VERTICAL_ASCENT;
+        }
 
         ////////////////////////////////////
         // GLOBAL DATA /////////////////////
         ////////////////////////////////////
 
         //autopilot modes
-        const int ON_PAD = 0, VERTICAL_ASCENT = 1, GRAVITY_TURN = 2, COAST_TO_APOAPSIS = 3, CIRCULARIZE = 4, DISENGAGED = 5;
+        public enum AscentMode { ON_PAD, VERTICAL_ASCENT, GRAVITY_TURN, COAST_TO_APOAPSIS, CIRCULARIZE, DISENGAGED };
+        
         String[] modeStrings = new String[] { "Awaiting liftoff", "Vertical ascent", "Gravity turn", "Coasting to apoapsis", "Circularizing", "Disengaged" };
-        int mode = DISENGAGED;
+        public AscentMode mode = AscentMode.DISENGAGED;
 
         //control errors
         Vector3d lastThrustError = Vector3d.zero;
@@ -35,7 +79,7 @@ namespace MuMech
         const double velocityKP = 5.0;
         const double thrustKP = 3.0;
         const double thrustKD = 15.0;
-        double thrustGainAttenuator = 1;
+        //double thrustGainAttenuator = 1;
 
 
         //GUI stuff
@@ -169,7 +213,7 @@ namespace MuMech
                 _autoWarpToApoapsis = value;
             }
         }
-        
+
         bool _seizeThrottle = true;
         bool seizeThrottle
         {
@@ -219,7 +263,7 @@ namespace MuMech
             base.onLoadGlobalSettings(settings);
 
             gravityTurnStartAltitude = settings["AA_gravityTurnStartAltitude"].valueDecimal(10000.0);
-            gravityTurnStartAltitudeKmString = (gravityTurnStartAltitude/1000.0).ToString();
+            gravityTurnStartAltitudeKmString = (gravityTurnStartAltitude / 1000.0).ToString();
             gravityTurnEndAltitude = settings["AA_gravityTurnEndAltitude"].valueDecimal(70000.0);
             gravityTurnEndAltitudeKmString = (gravityTurnEndAltitude / 1000.0).ToString();
             gravityTurnEndPitch = settings["AA_gravityTurnEndPitch"].valueDecimal(0.0);
@@ -237,7 +281,7 @@ namespace MuMech
             autoWarpToApoapsis = settings["AA_autoWarpToApoapsis"].valueBool(true);
             seizeThrottle = settings["AA_seizeThrottle"].valueBool(true);
 
-            Vector4 savedPathWindowPos = settings["AA_pathWindowPos"].valueVector(new Vector4(Screen.width/2, Screen.height/2));
+            Vector4 savedPathWindowPos = settings["AA_pathWindowPos"].valueVector(new Vector4(Screen.width / 2, Screen.height / 2));
             pathWindowPos = new Rect(savedPathWindowPos.x, savedPathWindowPos.y, 10, 10);
 
             Vector4 savedHelpWindowPos = settings["AA_helpWindowPos"].valueVector(new Vector4(150, 50));
@@ -313,12 +357,12 @@ namespace MuMech
         //called every frame or so; this is where we manipulate the flight controls
         public override void drive(FlightCtrlState s)
         {
-            if (mode == DISENGAGED) return;
+            if (mode == AscentMode.DISENGAGED) return;
 
-            if (mode == ON_PAD &&
+            if (mode == AscentMode.ON_PAD &&
                 (Staging.CurrentStage != Staging.StageCount))
             {
-                mode = VERTICAL_ASCENT;
+                mode = AscentMode.VERTICAL_ASCENT;
             }
 
             handleAutoStaging();
@@ -328,20 +372,20 @@ namespace MuMech
             Vector3d desiredThrustVector = Vector3d.zero;
             switch (mode)
             {
-                case VERTICAL_ASCENT:
-                    desiredThrustVector = driveVerticalAscent(s);
+                case AscentMode.VERTICAL_ASCENT:
+                    driveVerticalAscent(s);
                     break;
 
-                case GRAVITY_TURN:
-                    desiredThrustVector = driveGravityTurn(s);
+                case AscentMode.GRAVITY_TURN:
+                    driveGravityTurn(s);
                     break;
 
-                case COAST_TO_APOAPSIS:
-                    desiredThrustVector = driveCoastToApoapsis(s);
+                case AscentMode.COAST_TO_APOAPSIS:
+                    driveCoastToApoapsis(s);
                     break;
 
-                case CIRCULARIZE:
-                    desiredThrustVector = driveCircularizationBurn(s);
+                case AscentMode.CIRCULARIZE:
+                    driveCircularizationBurn(s);
                     break;
             }
 
@@ -353,36 +397,23 @@ namespace MuMech
                 s.mainThrottle = Mathf.Clamp(s.mainThrottle, 0.0F, (float)((1 - maxTempRatio) / 0.95));
             }
 
-
-            steerTowardThrustVector(s, desiredThrustVector);
-
         }
 
 
         //auto-stage when safe
         private void handleAutoStaging()
         {
-            //if (Input.GetKey(KeyCode.P))
-            //{
-            //    ARUtils.debugPartStates(part.vessel.rootPart, 0);
-            //}
-
-            print("handle auto staging");
             //if autostage enabled, and if we are not waiting on the pad, and if we didn't immediately just fire the previous stage
-            if (autoStage && mode != ON_PAD && Staging.CurrentStage > 0 && Staging.CurrentStage > autoStageLimit 
+            if (autoStage && mode != AscentMode.ON_PAD && Staging.CurrentStage > 0 && Staging.CurrentStage > autoStageLimit
                 && vesselState.time - lastStageTime > autoStageDelay)
             {
-                print("auto stage a");
                 //don't decouple active or idle engines or tanks
                 if (!ARUtils.inverseStageDecouplesActiveOrIdleEngineOrTank(Staging.CurrentStage - 1, part.vessel))  //if staging is safe:
                 {
-                    print("autostage b");
-
                     //only fire decouplers to drop deactivated engines or tanks
                     if (!ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel)
                         || ARUtils.inverseStageDecouplesDeactivatedEngineOrTank(Staging.CurrentStage - 1, part.vessel))
                     {
-                        print("auto stage c");
                         if (ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel))
                         {
                             //if we decouple things, delay the next stage a bit to avoid exploding the debris
@@ -395,50 +426,6 @@ namespace MuMech
             }
         }
 
-        //slews the ship toward desiredThrustVector
-        void steerTowardThrustVector(FlightCtrlState s, Vector3d desiredThrustVector)
-        {
-            //hack
-            if (desiredThrustVector == Vector3d.zero) return;
-
-            if (Vector3d.Dot(vesselState.forward, desiredThrustVector) < 0)
-            {
-                //if our current heading is way off the desired one, establish an intermediate goal that is less than 90 degrees away:
-                desiredThrustVector = ((vesselState.forward + desiredThrustVector) / 2).normalized;
-            }
-            Vector3d thrustError = (Vector3d)part.vessel.transform.InverseTransformDirection((Vector3)desiredThrustVector);
-
-            Vector3d derivativeThrustError = (thrustError - lastThrustError) / vesselState.deltaT;
-            lastThrustError = thrustError;
-
-            Vector3d MOI = part.vessel.findLocalMOI(vesselState.CoM);
-            Vector3d angularVelocity = part.vessel.transform.InverseTransformDirection(part.vessel.rigidbody.angularVelocity);
-
-            Vector3d command = thrustKP * thrustError + thrustKD * derivativeThrustError;
-            command *= (MOI.magnitude / 60.0); //need to use more force on the controls for heavier ships
-
-            //if we find we're constantly trying to give commands greater than 1, reduce all the gains
-            //until our commands fall in a more reasonable range. this seems to give better control on big rockets
-            command *= thrustGainAttenuator;
-            if (Math.Abs(command.x) > 1 || Math.Abs(command.z) > 1)
-            {
-                thrustGainAttenuator *= 0.99;
-            }
-            else if (thrustGainAttenuator < 1)
-            {
-                thrustGainAttenuator *= 1.005;
-            }
-
-            s.yaw += (float)command.x;
-            s.pitch -= (float)command.z;
-
-            s.yaw = Mathf.Clamp(s.yaw, -1.0F, +1.0F);
-            s.pitch = Mathf.Clamp(s.pitch, -1.0F, +1.0F);
-
-            //just damp out any roll:
-            s.roll += (float)(angularVelocity.y * MOI.y);
-            s.roll = Mathf.Clamp(s.roll, -1.0F, +1.0F);
-        }
 
         ///////////////////////////////////////
         // VERTICAL ASCENT AND GRAVITY TURN ///
@@ -483,35 +470,37 @@ namespace MuMech
             //return Mathf.Clamp((float)(speedDifference / 100.0), 0.05F, 1.0F);
         }
 
-        Vector3d driveVerticalAscent(FlightCtrlState s)
+        void driveVerticalAscent(FlightCtrlState s)
         {
             //during the vertical ascent we just thrust straight up at max throttle
             if (seizeThrottle) s.mainThrottle = efficientThrottle();
-            if (vesselState.altitudeASL > gravityTurnStartAltitude) mode = GRAVITY_TURN;
+            if (vesselState.altitudeASL > gravityTurnStartAltitude) mode = AscentMode.GRAVITY_TURN;
             if (seizeThrottle && part.vessel.orbit.ApR > desiredOrbitRadius)
             {
                 lastAccelerationTime = vesselState.time;
-                mode = COAST_TO_APOAPSIS;
+                mode = AscentMode.COAST_TO_APOAPSIS;
             }
-            return vesselState.up;
+            core.attitudeTo(Vector3d.up, MechJebCore.AttitudeReference.SURFACE_NORTH, this);
         }
 
 
 
-        Vector3d driveGravityTurn(FlightCtrlState s)
+        void driveGravityTurn(FlightCtrlState s)
         {
             //stop the gravity turn when our apoapsis reaches the desired altitude
             if (seizeThrottle && part.vessel.orbit.ApR > desiredOrbitRadius)
             {
-                mode = COAST_TO_APOAPSIS;
+                mode = AscentMode.COAST_TO_APOAPSIS;
                 lastAccelerationTime = vesselState.time;
-                return vesselState.velocityVesselOrbitUnit;
+                core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
+                return;
             }
 
             if (vesselState.altitudeASL < gravityTurnStartAltitude)
             {
-                mode = VERTICAL_ASCENT;
-                return vesselState.up;
+                mode = AscentMode.VERTICAL_ASCENT;
+                core.attitudeTo(Vector3d.up, MechJebCore.AttitudeReference.SURFACE_NORTH, this);
+                return;
             }
 
             if (seizeThrottle)
@@ -522,10 +511,13 @@ namespace MuMech
                     //when we are bringing down the throttle to make the apoapsis accurate, we're liable to point in weird
                     //directions because thrust goes down and so "difficulty" goes up. so just burn prograde
                     s.mainThrottle = gentleThrottle;
-                    return vesselState.velocityVesselOrbitUnit;
+                    core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
+                    return;
                 }
-
-                s.mainThrottle = efficientThrottle();
+                else
+                {
+                    s.mainThrottle = efficientThrottle();
+                }
             }
 
 
@@ -538,13 +530,11 @@ namespace MuMech
             double referenceFrameBlend = vesselState.speedOrbital / verticalSpeedForDesiredApoapsis;
             referenceFrameBlend = Mathf.Clamp((float)referenceFrameBlend, 0.0F, 1.0F);
 
-            Vector3d actualVelocityUnit = ((1 - referenceFrameBlend) * vesselState.velocityVesselSurfaceUnit 
+            Vector3d actualVelocityUnit = ((1 - referenceFrameBlend) * vesselState.velocityVesselSurfaceUnit
                                                + referenceFrameBlend * vesselState.velocityVesselOrbitUnit).normalized;
 
             //minus sign is there because somewhere a sign got flipped in integrating with MechJeb
             double surfaceAngle = -desiredSurfaceAngle(vesselState.latitude * Math.PI / 180.0);
-            print("desiredInclination = " + desiredInclination);
-            print("surfaceAngle = " + surfaceAngle);
             Vector3d desiredSurfaceHeading = Math.Cos(surfaceAngle) * vesselState.east + Math.Sin(surfaceAngle) * vesselState.north;
             double desPitch = desiredPitch(vesselState.altitudeASL);
             Vector3d desiredVelocityUnit = Math.Cos(desPitch * Math.PI / 180) * desiredSurfaceHeading
@@ -566,7 +556,7 @@ namespace MuMech
             desiredThrustVector += steerOffset;
             desiredThrustVector = desiredThrustVector.normalized;
 
-            return desiredThrustVector;
+            core.attitudeTo(desiredThrustVector, MechJebCore.AttitudeReference.INERTIAL, this);
         }
 
         ///////////////////////////////////////
@@ -615,20 +605,22 @@ namespace MuMech
             return Math.Sqrt(gAtRadius(radius) * radius);
         }
 
-        Vector3d driveCoastToApoapsis(FlightCtrlState s)
+        void driveCoastToApoapsis(FlightCtrlState s)
         {
             s.mainThrottle = 0.0F;
 
             if (Vector3d.Dot(vesselState.velocityVesselOrbit, vesselState.up) < 0) //if we have started to descend, i.e. reached apoapsis, circularize
             {
-                mode = CIRCULARIZE;
+                mode = AscentMode.CIRCULARIZE;
                 if (TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(0);
+                return;
             }
 
             if (part.vessel.orbit.ApR < desiredOrbitRadius - 1000.0)
             {
-                mode = GRAVITY_TURN;
-                return vesselState.velocityVesselOrbitUnit;
+                mode = AscentMode.GRAVITY_TURN;
+                core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
+                return;
             }
 
             //handle time warp
@@ -669,12 +661,20 @@ namespace MuMech
             //if we are running physics, we can do burns if the apoapsis falls, and we can maintain our orientation in preparation for circularization
             //if our Ap is too low and we are pointing reasonably along our velocity
             if (TimeWarp.CurrentRateIndex <= 1
-                && part.vessel.orbit.ApR < desiredOrbitRadius - 10
-                && Vector3d.Dot(vesselState.forward, vesselState.velocityVesselOrbitUnit) > 0.5)
+                && part.vessel.orbit.ApR < desiredOrbitRadius - 10)
             {
-                s.mainThrottle = throttleToRaiseApoapsis(part.vessel.orbit.ApR, desiredOrbitRadius);
                 lastAccelerationTime = vesselState.time;
-                return vesselState.velocityVesselOrbitUnit;
+                core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
+
+                if (Vector3d.Dot(vesselState.forward, vesselState.velocityVesselOrbitUnit) > 0.75)
+                {
+                    s.mainThrottle = throttleToRaiseApoapsis(part.vessel.orbit.ApR, desiredOrbitRadius);
+                }
+                else
+                {
+                    s.mainThrottle = 0.0F;
+                }
+                return;
             }
 
             //if we are out of the atmosphere and have a high enough apoapsis and aren't near apoapsis, play dead to 
@@ -685,7 +685,8 @@ namespace MuMech
                 && part.vessel.orbit.timeToAp > lookaheadTimes[2]
                 && part.vessel.orbit.ApR > desiredOrbitRadius - 10)
             {
-                return Vector3d.zero;
+                //don't steer
+                core.attitudeDeactivate(this);
             }
             else
             {
@@ -693,18 +694,37 @@ namespace MuMech
                 double desiredThrustPitch = thrustPitchForZeroVerticalAcc(part.vessel.orbit.ApR, expectedSpeedAtApoapsis(),
                                                                           vesselState.thrustAccel(expectedApoapsisThrottle), 0);
                 Vector3d groundHeading = Vector3d.Exclude(vesselState.up, part.vessel.orbit.GetVel()).normalized;
-                return (Math.Cos(desiredThrustPitch) * groundHeading + Math.Sin(desiredThrustPitch) * vesselState.up);
+                Vector3d desiredThrustVector = (Math.Cos(desiredThrustPitch) * groundHeading + Math.Sin(desiredThrustPitch) * vesselState.up);
+                core.attitudeTo(desiredThrustVector, MechJebCore.AttitudeReference.INERTIAL, this);
+                return;
             }
         }
 
 
 
-        Vector3d driveCircularizationBurn(FlightCtrlState s)
+        void driveCircularizationBurn(FlightCtrlState s)
         {
             if (part.vessel.orbit.ApR < desiredOrbitRadius - 1000.0)
             {
-                mode = GRAVITY_TURN;
-                return vesselState.velocityVesselOrbitUnit;
+                mode = AscentMode.GRAVITY_TURN;
+                core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
+                return;
+            }
+
+            double orbitalRadius = (vesselState.CoM - part.vessel.mainBody.position).magnitude;
+            double circularSpeed = Math.Sqrt(orbitalRadius * vesselState.localg);
+
+            //we start the circularization burn at apoapsis, and the orbit is about as circular as it is going to get when the 
+            //periapsis has moved closer to us than the apoapsis
+            if (Math.Min(part.vessel.orbit.timeToPe, part.vessel.orbit.period - part.vessel.orbit.timeToPe) <
+                Math.Min(part.vessel.orbit.timeToAp, part.vessel.orbit.period - part.vessel.orbit.timeToAp)
+                || vesselState.speedOrbital > circularSpeed + 1.0) //makes sure we don't keep burning forever if we are somehow way off course
+            {
+                s.mainThrottle = 0.0F;
+                turnOffSteering();
+                core.controlRelease(this);
+                enabled = false;
+                return;
             }
 
             //During circularization we think in the *non-rotating* frame, but allow ourselves to discuss centrifugal acceleration
@@ -712,9 +732,6 @@ namespace MuMech
             //To get a circular orbit we need to reach orbital horizontal speed while simultaneously getting zero vertical speed.
             //We compute the thrust vector needed to get zero vertical acceleration, taking into account gravity and centrifugal
             //acceleration. If we currently have a nonzero vertical velocity we then adjust the thrust vector to bring that to zero
-
-            double orbitalRadius = (vesselState.CoM - part.vessel.mainBody.position).magnitude;
-            double circularSpeed = Math.Sqrt(orbitalRadius * vesselState.localg);
 
             s.mainThrottle = (float)circularizationBurnThrottle(vesselState.speedOrbital, circularSpeed);
 
@@ -724,19 +741,14 @@ namespace MuMech
             double horizontalSpeed = Vector3d.Dot(groundHeading, vesselState.velocityVesselOrbit);
             double verticalSpeed = Vector3d.Dot(vesselState.up, vesselState.velocityVesselOrbit);
 
+            //test the following modification: pitch = 0 if throttle < 1
             double desiredThrustPitch = thrustPitchForZeroVerticalAcc(orbitalRadius, horizontalSpeed, thrustAcceleration, verticalSpeed);
 
-            //we start the circularization burn at apoapsis, and the orbit is about as circular as it is going to get when the 
-            //periapsis has moved closer to us than the apoapsis
-            if (Math.Min(part.vessel.orbit.timeToPe, part.vessel.orbit.period - part.vessel.orbit.timeToPe) <
-                Math.Min(part.vessel.orbit.timeToAp, part.vessel.orbit.period - part.vessel.orbit.timeToAp)
-                || vesselState.speedOrbital > circularSpeed + 1.0) //makes sure we don't keep burning forever if we are somehow way off course
-            {
-                s.mainThrottle = 0.0F;
-                enabled = false;
-            }
+            
 
-            return (Math.Cos(desiredThrustPitch) * groundHeading + Math.Sin(desiredThrustPitch) * vesselState.up);
+            //Vector3d desiredThrustVector = Math.Cos(desiredThrustPitch) * groundHeading + Math.Sin(desiredThrustPitch) * vesselState.up;
+            Vector3d desiredThrustVector = Math.Cos(desiredThrustPitch) * Vector3d.forward + Math.Sin(desiredThrustPitch) * Vector3d.up;
+            core.attitudeTo(desiredThrustVector, MechJebCore.AttitudeReference.ORBIT_HORIZONTAL, this);
         }
 
 
@@ -778,13 +790,14 @@ namespace MuMech
             GUILayout.BeginHorizontal();
 
             GUIStyle s = new GUIStyle(GUI.skin.button);
-            if (mode == DISENGAGED)
+            if (mode == AscentMode.DISENGAGED)
             {
                 s.normal.textColor = Color.green;
                 if (GUILayout.Button("Engage", s))
                 {
                     initializeInternals();
-                    mode = ON_PAD;
+                    core.controlClaim(this);
+                    mode = AscentMode.ON_PAD;
                 }
             }
             else
@@ -792,6 +805,7 @@ namespace MuMech
                 s.normal.textColor = Color.red;
                 if (GUILayout.Button("Disengage", s))
                 {
+                    core.controlRelease(this);
                     enabled = false;
                 }
             }
@@ -820,7 +834,7 @@ namespace MuMech
 
                 if (seizeThrottle)
                 {
-                    double orbitAltKm = (desiredOrbitRadius - part.vessel.mainBody.Radius)/1000.0;
+                    double orbitAltKm = (desiredOrbitRadius - part.vessel.mainBody.Radius) / 1000.0;
                     orbitAltKm = doGUITextInput("Orbit altitude: ", 100.0F, desiredOrbitAltitudeKmString, 30.0F, "km", 30.0F, out desiredOrbitAltitudeKmString, orbitAltKm);
                     desiredOrbitRadius = part.vessel.mainBody.Radius + orbitAltKm * 1000.0;
                 }
@@ -838,7 +852,7 @@ namespace MuMech
 
                     if (GUILayout.Button("Circularize"))
                     {
-                        mode = COAST_TO_APOAPSIS;
+                        mode = AscentMode.COAST_TO_APOAPSIS;
                     }
                 }
 
@@ -859,13 +873,13 @@ namespace MuMech
                 if (autoWarpToApoapsis && !newAutoWarp && TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(0);
                 autoWarpToApoapsis = newAutoWarp;
 
-                
+
                 GUILayout.BeginHorizontal();
                 GUIStyle stateStyle = new GUIStyle(GUI.skin.label);
                 stateStyle.normal.textColor = Color.green;
-                if (mode == DISENGAGED) stateStyle.normal.textColor = Color.red;
+                if (mode == AscentMode.DISENGAGED) stateStyle.normal.textColor = Color.red;
                 GUILayout.Label("State: ", GUILayout.Width(60));
-                GUILayout.Label(modeStrings[mode], stateStyle);
+                GUILayout.Label(modeStrings[(int)mode], stateStyle);
 
                 GUILayout.EndHorizontal();
 
@@ -1028,37 +1042,14 @@ namespace MuMech
         ///////////////////////////////////////////////
 
 
- /*       private void initializeSettings()
-        {
-            gravityTurnStartAltitude = 10000.0;
-            gravityTurnStartAltitudeKmString = "10";
-            gravityTurnEndAltitude = 70000.0;
-            gravityTurnEndAltitudeKmString = "70";
-            gravityTurnEndPitch = 0;
-            gravityTurnEndPitchString = "0";
-            desiredOrbitRadius = 600000.0 + 100000.0;
-            desiredOrbitAltitudeKmString = "100";
-            desiredInclination = 0.0;
-            desiredInclinationString = "0";
-
-            autoWarpToApoapsis = true;
-            autoStage = true;
-            minimized = false;
-            seizeThrottle = true;
-        }*/
 
         private void initializeInternals()
         {
-            mode = DISENGAGED;
+            mode = AscentMode.DISENGAGED;
             lastAccelerationTime = 0;
             lastAttemptedWarpIndex = 0;
             lastStageTime = 0;
         }
-
-
-
-
-
 
 
         ///////////////////////////////////////
@@ -1111,12 +1102,6 @@ namespace MuMech
         public override String getName()
         {
             return "Ascent autopilot";
-        }
-
-
-        void print(String s)
-        {
-            MonoBehaviour.print(s);
         }
     }
 
