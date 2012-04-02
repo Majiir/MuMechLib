@@ -683,7 +683,7 @@ namespace MuMech {
             modules.Add(new MechJebModuleLandingAutopilot(this));
             modules.Add(new MechJebModuleAscentAutopilot(this));
 
-            modules.Add(new MechJebModuleJoke(this));
+            //modules.Add(new MechJebModuleJoke(this));
 
             //modules.Add(new MechJebModuleAscension(this));
             //modules.Add(new MechJebModuleOrbitOper(this));
