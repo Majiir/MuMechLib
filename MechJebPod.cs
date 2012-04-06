@@ -124,8 +124,8 @@ class MuMechJebPod : CommandPod {
             cam = (FlightCamera)GameObject.FindObjectOfType(typeof(FlightCamera));
         }
 
-        if (core.rotationActive) {
-            eye.rotation = Quaternion.RotateTowards(eye.rotation, core.rotationGetReferenceRotation(core.rotationReference) * core.rotationTarget * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
+        if (core.attitudeActive) {
+            eye.rotation = Quaternion.RotateTowards(eye.rotation, core.attitudeGetReferenceRotation(core.attitudeReference) * core.attitudeTarget * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
         } else {
             if (brainStress < brainStressMin) {
                 eye.rotation = Quaternion.RotateTowards(eye.rotation, Quaternion.LookRotation((cam.transform.position - eye.position).normalized, cam.transform.up) * Quaternion.Euler(90, 0, 0), 360 * TimeWarp.fixedDeltaTime);
@@ -161,7 +161,7 @@ class MuMechJebPod : CommandPod {
             }
         }
 
-        if ((shellStat == ShellStat.CLOSED) && ((Input.GetKey(KeyCode.KeypadPeriod)) || (brainStress >= brainStressMax))) {
+        if ((shellStat == ShellStat.CLOSED) && (brainStress >= brainStressMax)) {
             shellStat = ShellStat.EJECTING;
             shellDecay = 0;
         }
