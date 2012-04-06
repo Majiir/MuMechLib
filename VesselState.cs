@@ -25,6 +25,9 @@ namespace MuMech {
         public Vector3d velocityVesselOrbit;
         public Vector3d velocityVesselOrbitUnit;
 
+        public Vector3d angularVelocity;
+        public Vector3d angularMomentum;
+
         public Vector3d upNormalToVelSurface; //unit vector in the plane of up and velocityVesselSurface and perpendicular to velocityVesselSurface
         public Vector3d upNormalToVelOrbit;   //unit vector in the plane of up and velocityVesselOrbit and perpendicular to velocityVesselOrbit 
         public Vector3d leftSurface;  //unit vector perpendicular to up and velocityVesselSurface
@@ -87,6 +90,8 @@ namespace MuMech {
             velocityVesselSurfaceUnit = velocityVesselSurface.normalized;
             velocityMainBodySurface = rotationSurface * velocityVesselSurface;
 
+            angularVelocity = Quaternion.Inverse(vessel.transform.rotation) * vessel.rigidbody.angularVelocity;
+
             upNormalToVelSurface = Vector3d.Exclude(velocityVesselSurfaceUnit, up).normalized;
             upNormalToVelOrbit = Vector3d.Exclude(velocityVesselOrbit, up).normalized;
             leftSurface = -Vector3d.Cross(upNormalToVelSurface, velocityVesselSurfaceUnit);
@@ -137,14 +142,16 @@ namespace MuMech {
                 MoI += p.Rigidbody.inertiaTensor;
                 if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.LastStage) && (p.inverseStage == Staging.LastStage))) && ((p is LiquidEngine) || (p is SolidRocket))) {
                     if (p is LiquidEngine) {
-                        thrustAvailable += ((LiquidEngine)p).maxThrust;
-                        thrustMinimum += ((LiquidEngine)p).minThrust;
+                        double usableFraction = Vector3d.Dot((p.transform.rotation * ((LiquidEngine)p).thrustVector).normalized, forward);
+                        thrustAvailable += ((LiquidEngine)p).maxThrust * usableFraction;
+                        thrustMinimum += ((LiquidEngine)p).minThrust * usableFraction;
                         if (((LiquidEngine)p).thrustVectoringCapable) {
-                            torqueThrustPYAvailable += Math.Sin(((LiquidEngine)p).gimbalRange * Math.PI / 180) * ((LiquidEngine)p).maxThrust * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
+                            torqueThrustPYAvailable += Math.Sin(Math.Abs(((LiquidEngine)p).gimbalRange) * Math.PI / 180) * ((LiquidEngine)p).maxThrust * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
                         }
                     } else if (p is SolidRocket) {
-                        thrustAvailable += ((SolidRocket)p).thrust;
-                        thrustMinimum += ((SolidRocket)p).thrust;
+                        double usableFraction = Vector3d.Dot((p.transform.rotation * ((SolidRocket)p).thrustVector).normalized, forward);
+                        thrustAvailable += ((SolidRocket)p).thrust * usableFraction;
+                        thrustMinimum += ((SolidRocket)p).thrust * usableFraction;
                     }
                 }
                 if ((!FlightInputHandler.RCSLock) && (p is RCSModule)) {
@@ -158,10 +165,12 @@ namespace MuMech {
                     torquePYAvailable += maxT * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
                 }
                 if (p is CommandPod) {
-                    torqueRAvailable += ((CommandPod)p).rotPower;
-                    torquePYAvailable += ((CommandPod)p).rotPower * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
+                    torqueRAvailable += Math.Abs(((CommandPod)p).rotPower);
+                    torquePYAvailable += Math.Abs(((CommandPod)p).rotPower) * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
                 }
             }
+
+            angularMomentum = new Vector3d(angularVelocity.x * MoI.x, angularVelocity.y * MoI.y, angularVelocity.z * MoI.z);
 
             maxThrustAccel = thrustAvailable / mass;
             minThrustAccel = thrustMinimum / mass;

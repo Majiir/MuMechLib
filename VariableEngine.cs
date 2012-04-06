@@ -27,6 +27,28 @@ class MuMechVariableEngine : LiquidEngine {
     public float nozzleExtensionTime = 5;
     public Vector3 nozzleAxis = Vector3.up;
 
+    public string rotor = "";
+    public Vector3 rotorAxis = Vector3.forward;
+    public float rotorMin = 0;
+    public float rotorMax = 3600;
+    public float rotorAirMult = 1;
+    public float rotorAirMin = 1;
+    public int rotorBlur = 20;
+    public string rotor2 = "";
+    public Vector3 rotor2Axis = Vector3.forward;
+    public float rotor2Min = 0;
+    public float rotor2Max = 3600;
+    public float rotor2AirMult = 1;
+    public float rotor2AirMin = 1;
+    public int rotor2Blur = 20;
+    public string rotor3 = "";
+    public Vector3 rotor3Axis = Vector3.forward;
+    public float rotor3Min = 0;
+    public float rotor3Max = 3600;
+    public float rotor3AirMult = 1;
+    public float rotor3AirMin = 1;
+    public int rotor3Blur = 20;
+
     protected bool gamePaused = false;
     protected float minThrustOrig = 0;
     protected float maxThrustOrig = 0;
@@ -35,6 +57,9 @@ class MuMechVariableEngine : LiquidEngine {
     protected bool gotGimbalOrig = false;
     protected float nozzleProgress = 0;
     protected Transform nozzle = null;
+    protected Transform[] rotorTrans = { null };
+    protected Transform[] rotor2Trans = { null };
+    protected Transform[] rotor3Trans = { null };
 
     protected override void onPartStart() {
         nozzle = transform.Find("model/obj_gimbal/nozzle");
@@ -45,6 +70,42 @@ class MuMechVariableEngine : LiquidEngine {
             origGimbalPos = nozzle.localPosition;
             gotGimbalOrig = true;
             nozzle.localPosition = origGimbalPos + nozzleAxis.normalized * nozzleExtension;
+        }
+        if (rotor != "") {
+            rotorTrans = new Transform[rotorBlur];
+            rotorTrans[0] = transform.Find("model").FindChild(rotor);
+            if (rotorTrans[0] != null) {
+                for (int i = 1; i < rotorBlur; i++) {
+                    GameObject neo = (GameObject)GameObject.Instantiate(rotorTrans[0].gameObject, rotorTrans[0].position, rotorTrans[0].rotation);
+                    neo.transform.parent = rotorTrans[0].parent;
+                    rotorTrans[i] = neo.transform;
+                }
+
+            }
+        }
+        if (rotor2 != "") {
+            rotor2Trans = new Transform[rotor2Blur];
+            rotor2Trans[0] = transform.Find("model").FindChild(rotor2);
+            if (rotor2Trans[0] != null) {
+                for (int i = 1; i < rotor2Blur; i++) {
+                    GameObject neo = (GameObject)GameObject.Instantiate(rotor2Trans[0].gameObject, rotor2Trans[0].position, rotor2Trans[0].rotation);
+                    neo.transform.parent = rotor2Trans[0].parent;
+                    rotor2Trans[i] = neo.transform;
+                }
+
+            }
+        }
+        if (rotor3 != "") {
+            rotor3Trans = new Transform[rotor3Blur];
+            rotor3Trans[0] = transform.Find("model").FindChild(rotor3);
+            if (rotor3Trans[0] != null) {
+                for (int i = 1; i < rotor3Blur; i++) {
+                    GameObject neo = (GameObject)GameObject.Instantiate(rotor3Trans[0].gameObject, rotor3Trans[0].position, rotor3Trans[0].rotation);
+                    neo.transform.parent = rotor3Trans[0].parent;
+                    rotor3Trans[i] = neo.transform;
+                }
+
+            }
         }
 
         base.onPartStart();
@@ -113,6 +174,52 @@ class MuMechVariableEngine : LiquidEngine {
         }
 
         base.onActiveUpdate();
+    }
+
+    protected override void onPartFixedUpdate() {
+        if (rotorTrans[0] != null) {
+            rotorTrans[0].localRotation = rotorTrans[rotorBlur - 1].localRotation;
+            if ((state == PartStates.ACTIVE) && vessels[vessel].groups[group]) {
+                rotorTrans[rotorBlur - 1].RotateAroundLocal(rotorAxis, Mathf.Sign(rotorMax) * Mathf.Max(Mathf.Abs(rotorMin + rotorMax * this.thrust / this.maxThrust), Mathf.Abs((float)FlightGlobals.ship_srfVelocity.magnitude * rotorAirMult)) * TimeWarp.fixedDeltaTime);
+            } else {
+                float airRot = Mathf.Abs((float)FlightGlobals.ship_srfVelocity.magnitude * rotorAirMult);
+                if (airRot > rotorAirMin) {
+                    rotorTrans[rotorBlur - 1].RotateAroundLocal(rotorAxis, Mathf.Sign(rotorMax) * airRot * TimeWarp.fixedDeltaTime);
+                }
+            }
+            for (int i = 1; i < rotorBlur - 1; i++) {
+                rotorTrans[i].localRotation = Quaternion.Lerp(rotorTrans[0].localRotation, rotorTrans[rotorBlur - 1].localRotation, (float)i / (float)rotorBlur);
+            }
+        }
+        if (rotor2Trans[0] != null) {
+            rotor2Trans[0].localRotation = rotor2Trans[rotor2Blur - 1].localRotation;
+            if ((state == PartStates.ACTIVE) && vessels[vessel].groups[group]) {
+                rotor2Trans[rotor2Blur - 1].RotateAroundLocal(rotor2Axis, Mathf.Sign(rotor2Max) * Mathf.Max(Mathf.Abs(rotor2Min + rotor2Max * this.thrust / this.maxThrust), Mathf.Abs((float)FlightGlobals.ship_srfVelocity.magnitude * rotor2AirMult)) * TimeWarp.fixedDeltaTime);
+            } else {
+                float airRot = Mathf.Abs((float)FlightGlobals.ship_srfVelocity.magnitude * rotor2AirMult);
+                if (airRot > rotor2AirMin) {
+                    rotor2Trans[rotor2Blur - 1].RotateAroundLocal(rotor2Axis, Mathf.Sign(rotor2Max) * airRot * TimeWarp.fixedDeltaTime);
+                }
+            }
+            for (int i = 1; i < rotor2Blur - 1; i++) {
+                rotor2Trans[i].localRotation = Quaternion.Lerp(rotor2Trans[0].localRotation, rotor2Trans[rotor2Blur - 1].localRotation, i / (float)rotor2Blur);
+            }
+        }
+        if (rotor3Trans[0] != null) {
+            rotor3Trans[0].localRotation = rotor3Trans[rotor3Blur - 1].localRotation;
+            if ((state == PartStates.ACTIVE) && vessels[vessel].groups[group]) {
+                rotor3Trans[rotor3Blur - 1].RotateAroundLocal(rotor3Axis, Mathf.Sign(rotor3Max) * Mathf.Max(Mathf.Abs(rotor3Min + rotor3Max * this.thrust / this.maxThrust), Mathf.Abs((float)FlightGlobals.ship_srfVelocity.magnitude * rotor3AirMult)) * TimeWarp.fixedDeltaTime);
+            } else {
+                float airRot = Mathf.Abs((float)FlightGlobals.ship_srfVelocity.magnitude * rotor3AirMult);
+                if (airRot > rotor3AirMin) {
+                    rotor3Trans[rotor3Blur - 1].RotateAroundLocal(rotor3Axis, Mathf.Sign(rotor3Max) * airRot * TimeWarp.fixedDeltaTime);
+                }
+            }
+            for (int i = 1; i < rotor3Blur - 1; i++) {
+                rotor3Trans[i].localRotation = Quaternion.Lerp(rotor3Trans[0].localRotation, rotor3Trans[rotor3Blur - 1].localRotation, i / (float)rotor3Blur);
+            }
+        }
+        base.onPartFixedUpdate();
     }
 
     public bool RequestFuelType(string type, float amount, uint reqId) {
