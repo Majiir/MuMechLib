@@ -23,25 +23,77 @@ class MuMechToggle : MuMechPart {
     public string on_model = "on";
     public string off_model = "off";
     public string rotate_model = "on";
-    public Vector3 onRotateAxis = Vector3.forward;
+    public Vector3 rotateAxis = Vector3.forward;
+    public Vector3 rotatePivot = Vector3.zero;
     public float onRotateSpeed = 0;
     public string onKey = "p";
-    public Vector3 keyRotateAxis = Vector3.forward;
     public float keyRotateSpeed = 0;
     public string rotateKey = "9";
     public string revRotateKey = "0";
+    public bool rotateJoint = false;
+    public bool rotateLimits = false;
+    public float rotateMin = 0;
+    public float rotateMax = 300;
+    public bool rotateLimitsRevertOn = true;
+    public bool rotateLimitsRevertKey = false;
+    public bool rotateLimitsOff = false;
+    public float jointSpring = 0;
+    public float jointDamping = 0;
+    public bool onActivate = true;
+    public bool invertSymmetry = true;
+    public string fixedMesh = "";
+    public float friction = 0.5F;
+
+    public string translate_model = "on";
+    public Vector3 translateAxis = Vector3.forward;
+    public float onTranslateSpeed = 0;
+    public float keyTranslateSpeed = 0;
+    public string translateKey = "9";
+    public string revTranslateKey = "0";
+    public bool translateJoint = false;
+    public bool translateLimits = false;
+    public float translateMin = 0;
+    public float translateMax = 300;
+    public bool translateLimitsRevertOn = true;
+    public bool translateLimitsRevertKey = false;
+    public bool translateLimitsOff = false;
 
     protected bool on = false;
+    protected Quaternion origRotation;
+    protected float rotation = 0;
+    protected float rotationDelta = 0;
+    protected float rotationLast = 0;
+    protected bool reversedRotationOn = false;
+    protected bool reversedRotationKey = false;
+    protected Vector3 origTranslation;
+    protected float translation = 0;
+    protected float translationDelta = 0;
+    protected bool reversedTranslationOn = false;
+    protected bool reversedTranslationKey = false;
+    protected bool gotOrig = false;
+    protected List<Transform> mobileColliders = new List<Transform>();
+    protected int rotationChanged = 0;
+    protected int translationChanged = 0;
 
     public override void onFlightStateSave(Dictionary<string, KSPParseable> partDataCollection) {
         partDataCollection.Add("on", new KSPParseable(on, KSPParseable.Type.BOOL));
+        partDataCollection.Add("reversedRotationOn", new KSPParseable(reversedRotationOn, KSPParseable.Type.BOOL));
+        partDataCollection.Add("reversedRotationKey", new KSPParseable(reversedRotationKey, KSPParseable.Type.BOOL));
+        partDataCollection.Add("reversedTranslationOn", new KSPParseable(reversedTranslationOn, KSPParseable.Type.BOOL));
+        partDataCollection.Add("reversedTranslationKey", new KSPParseable(reversedTranslationKey, KSPParseable.Type.BOOL));
+        partDataCollection.Add("rot", new KSPParseable(rotation, KSPParseable.Type.FLOAT));
+        partDataCollection.Add("trans", new KSPParseable(translation, KSPParseable.Type.FLOAT));
         base.onFlightStateSave(partDataCollection);
     }
 
     public override void onFlightStateLoad(Dictionary<string, KSPParseable> parsedData) {
-        KSPParseable tmp;
-        parsedData.TryGetValue("on", out tmp);
-        on = tmp.value_bool;
+        if (parsedData.ContainsKey("on")) on = parsedData["on"].value_bool;
+        if (parsedData.ContainsKey("reversedRotationOn")) reversedRotationOn = parsedData["reversedRotationOn"].value_bool;
+        if (parsedData.ContainsKey("reversedRotationKey")) reversedRotationKey = parsedData["reversedRotationKey"].value_bool;
+        if (parsedData.ContainsKey("reversedTranslationOn")) reversedTranslationOn = parsedData["reversedTranslationOn"].value_bool;
+        if (parsedData.ContainsKey("reversedTranslationKey")) reversedTranslationKey = parsedData["reversedTranslationKey"].value_bool;
+        if (parsedData.ContainsKey("rot")) rotation = parsedData["rot"].value_float;
+        if (parsedData.ContainsKey("trans")) translation = parsedData["trans"].value_float;
         updateState();
         base.onFlightStateLoad(parsedData);
     }
@@ -85,9 +137,72 @@ class MuMechToggle : MuMechPart {
         }
     }
 
+    protected void colliderizeChilds(Transform obj) {
+        if (obj.name.StartsWith("node_collider") || obj.name.StartsWith("fixed_node_collider") || obj.name.StartsWith("mobile_node_collider")) {
+            print("Toggle: converting collider " + obj.name);
+            Mesh sharedMesh = UnityEngine.Object.Instantiate(obj.GetComponent<MeshFilter>().mesh) as Mesh;
+            UnityEngine.Object.Destroy(obj.GetComponent<MeshFilter>());
+            UnityEngine.Object.Destroy(obj.GetComponent<MeshRenderer>());
+            MeshCollider meshCollider = obj.gameObject.AddComponent<MeshCollider>();
+            meshCollider.sharedMesh = sharedMesh;
+            meshCollider.convex = true;
+            obj.parent = transform;
+            if (obj.name.StartsWith("mobile_node_collider")) {
+                mobileColliders.Add(obj);
+            }
+        }
+        for (int i = 0; i < obj.childCount; i++) {
+            colliderizeChilds(obj.GetChild(i));
+        }
+    }
+
+    protected override void onPartAwake() {
+        colliderizeChilds(transform.FindChild("model"));
+        base.onPartLoad();
+    }
+
+    protected override void onPartLoad() {
+        colliderizeChilds(transform.FindChild("model"));
+        base.onPartLoad();
+    }
+
+    protected void reparentFriction(Transform obj) {
+        Transform rotMod = transform.FindChild("model").FindChild(rotate_model);
+        for (int i = 0; i < obj.childCount; i++) {
+            MeshCollider tmp = obj.GetChild(i).GetComponent<MeshCollider>();
+            if (tmp != null) {
+                tmp.material.dynamicFriction = tmp.material.staticFriction = friction;
+                tmp.material.frictionCombine = PhysicMaterialCombine.Maximum;
+            }
+            if (obj.GetChild(i).name.StartsWith("fixed_node_collider") && (parent != null)) {
+                print("Toggle: reparenting collider " + obj.GetChild(i).name);
+                obj.GetChild(i).parent = parent.transform;
+            }
+        }
+        if ((mobileColliders.Count > 0) && (rotMod != null)) {
+            foreach (Transform c in mobileColliders) {
+                c.parent = rotMod;
+            }
+        }
+    }
+
     protected override void onPartStart() {
         base.onPartStart();
         stackIcon.SetIcon(DefaultIcons.STRUT);
+        if (vessel == null) {
+            return;
+        }
+        if (fixedMesh != "") {
+            Transform fix = transform.FindChild("model").FindChild(fixedMesh);
+            if ((fix != null) && (parent != null)) {
+                fix.parent = parent.transform;
+            }
+        }
+        reparentFriction(transform);
+        transform.RotateAround(transform.TransformPoint(rotatePivot), transform.TransformDirection(-rotateAxis), (invertSymmetry ? (isSymmMaster() ? 1 : -1) : 1) * (rotation - rotationDelta));
+        transform.Translate(translateAxis.normalized * (translation - translationDelta), Space.Self);
+        rotationDelta = rotationLast = rotation;
+        translationDelta = translation;
         on = true;
         updateState();
     }
@@ -106,33 +221,224 @@ class MuMechToggle : MuMechPart {
         base.onEditorUpdate();
     }
 
+    protected bool setupJoints() {
+        if (!gotOrig) {
+            if ((rotate_model != "") && (transform.FindChild("model").FindChild(rotate_model) != null)) {
+                origRotation = transform.FindChild("model").FindChild(rotate_model).localRotation;
+            }
+            if (translateJoint) {
+                origTranslation = transform.localPosition;
+            } else if ((translate_model != "") && (transform.FindChild("model").FindChild(translate_model) != null)) {
+                origTranslation = transform.FindChild("model").FindChild(translate_model).localPosition;
+            }
+            if (rotateJoint || translateJoint) {
+                if (attachJoint != null) {
+                    GameObject.Destroy(attachJoint);
+                    ConfigurableJoint newJoint = gameObject.AddComponent<ConfigurableJoint>();
+                    newJoint.breakForce = breakingForce;
+                    newJoint.breakTorque = breakingTorque;
+                    newJoint.axis = rotateJoint?rotateAxis:translateAxis;
+                    newJoint.secondaryAxis = (newJoint.axis == Vector3.up) ? Vector3.forward : Vector3.up;
+                    SoftJointLimit spring = new SoftJointLimit();
+                    spring.limit = 0;
+                    spring.damper = jointDamping;
+                    spring.spring = jointSpring;
+                    if (translateJoint) {
+                        newJoint.xMotion = ConfigurableJointMotion.Free;
+                        newJoint.yMotion = ConfigurableJointMotion.Free;
+                        newJoint.zMotion = ConfigurableJointMotion.Free;
+                        //newJoint.linearLimit = spring;
+                        JointDrive drv = new JointDrive();
+                        drv.mode = JointDriveMode.PositionAndVelocity;
+                        drv.positionSpring = 1e20F;
+                        drv.positionDamper = 0;
+                        drv.maximumForce = 1e20F;
+                        newJoint.xDrive = newJoint.yDrive = newJoint.zDrive = drv;
+                    } else {
+                        newJoint.xMotion = ConfigurableJointMotion.Locked;
+                        newJoint.yMotion = ConfigurableJointMotion.Locked;
+                        newJoint.zMotion = ConfigurableJointMotion.Locked;
+                    }
+                    if (rotateJoint) {
+                        newJoint.angularXMotion = ConfigurableJointMotion.Limited;
+                        newJoint.lowAngularXLimit = newJoint.highAngularXLimit = spring;
+                    } else {
+                        newJoint.angularXMotion = ConfigurableJointMotion.Locked;
+                    }
+                    newJoint.angularYMotion = ConfigurableJointMotion.Locked;
+                    newJoint.angularZMotion = ConfigurableJointMotion.Locked;
+                    //newJoint.anchor = rotateJoint ? rotatePivot : origTranslation;
+                    newJoint.anchor = rotateJoint ? rotatePivot : Vector3.zero;
+                    newJoint.connectedBody = parent.Rigidbody;
+                    attachJoint = newJoint;
+                    gotOrig = true;
+                    return true;
+                }
+            } else {
+                gotOrig = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
     protected override void onFlightStart() {
+        setupJoints();
         on = false;
         updateState();
     }
 
     protected override void onPartUpdate() {
-        if (connected && Input.GetKeyDown(onKey)) {
+        if (connected && Input.GetKeyDown(onKey) && (vessel == FlightGlobals.ActiveVessel)) {
             on = !on;
             updateState();
         }
     }
 
     protected override bool onPartActivate() {
-        on = true;
-        updateState();
+        if (onActivate) {
+            on = true;
+            updateState();
+        }
         return true;
     }
 
+    protected override void onJointDisable() {
+        rotationDelta = rotationLast = rotation;
+        translationDelta = translation;
+        gotOrig = false;
+    }
+
+    public void rotate(float amount) {
+        rotation += amount;
+        rotationChanged = 8;
+    }
+
+    public void translate(float amount) {
+        translation += amount;
+        translationChanged = 8;
+    }
+
     protected override void onPartFixedUpdate() {
+        if (state == PartStates.DEAD) {
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.KeypadMultiply)) {
+            print(MuMech.MuUtils.DumpObject(attachJoint));
+        }
+
+        if (setupJoints()) {
+            rotationChanged = 4;
+            translationChanged = 4;
+        }
+
         if (on && (onRotateSpeed != 0)) {
-            transform.FindChild("model").FindChild(rotate_model).RotateAroundLocal(onRotateAxis, TimeWarp.fixedDeltaTime * onRotateSpeed * (isSymmMaster() ? -1 : 1));
+            rotation += TimeWarp.fixedDeltaTime * onRotateSpeed * (reversedRotationOn ? -1 : 1);
+            rotationChanged |= 1;
         }
-        if ((keyRotateSpeed != 0) && Input.GetKey(rotateKey)) {
-            transform.FindChild("model").FindChild(rotate_model).RotateAroundLocal(keyRotateAxis, TimeWarp.fixedDeltaTime * keyRotateSpeed * (isSymmMaster() ? -1 : 1));
+        if ((keyRotateSpeed != 0) && Input.GetKey(rotateKey) && (vessel == FlightGlobals.ActiveVessel)) {
+            rotation += TimeWarp.fixedDeltaTime * keyRotateSpeed * (reversedRotationKey ? -1 : 1);
+            rotationChanged |= 2;
         }
-        if ((keyRotateSpeed != 0) && Input.GetKey(revRotateKey)) {
-            transform.FindChild("model").FindChild(rotate_model).RotateAroundLocal(keyRotateAxis, TimeWarp.fixedDeltaTime * keyRotateSpeed * (isSymmMaster() ? 1 : -1));
+        if ((keyRotateSpeed != 0) && Input.GetKey(revRotateKey) && (vessel == FlightGlobals.ActiveVessel)) {
+            rotation -= TimeWarp.fixedDeltaTime * keyRotateSpeed * (reversedRotationKey ? -1 : 1);
+            rotationChanged |= 2;
+        }
+        if (rotateLimits) {
+            if (rotation < rotateMin) {
+                rotation = rotateMin;
+                if (rotateLimitsRevertOn && ((rotationChanged & 1) > 0)) {
+                    reversedRotationOn = !reversedRotationOn;
+                }
+                if (rotateLimitsRevertKey && ((rotationChanged & 2) > 0)) {
+                    reversedRotationKey = !reversedRotationKey;
+                }
+                if (rotateLimitsOff) {
+                    on = false;
+                    updateState();
+                }
+            }
+            if (rotation > rotateMax) {
+                rotation = rotateMax;
+                if (rotateLimitsRevertOn && ((rotationChanged & 1) > 0)) {
+                    reversedRotationOn = !reversedRotationOn;
+                }
+                if (rotateLimitsRevertKey && ((rotationChanged & 2) > 0)) {
+                    reversedRotationKey = !reversedRotationKey;
+                }
+                if (rotateLimitsOff) {
+                    on = false;
+                    updateState();
+                }
+            }
+        }
+        if (Math.Abs(rotation - rotationDelta) > 120) {
+            rotationDelta = rotationLast;
+            attachJoint.connectedBody = null;
+            attachJoint.connectedBody = parent.Rigidbody;
+        }
+
+        if (on && (onTranslateSpeed != 0)) {
+            translation += TimeWarp.fixedDeltaTime * onTranslateSpeed * (reversedTranslationOn ? -1 : 1);
+            translationChanged |= 1;
+        }
+        if ((keyTranslateSpeed != 0) && Input.GetKey(translateKey) && (vessel == FlightGlobals.ActiveVessel)) {
+            translation += TimeWarp.fixedDeltaTime * keyTranslateSpeed * (reversedTranslationKey ? -1 : 1);
+            translationChanged |= 2;
+        }
+        if ((keyTranslateSpeed != 0) && Input.GetKey(revTranslateKey) && (vessel == FlightGlobals.ActiveVessel)) {
+            translation -= TimeWarp.fixedDeltaTime * keyTranslateSpeed * (reversedTranslationKey ? -1 : 1);
+            translationChanged |= 2;
+        }
+        if (translateLimits) {
+            if (translation < translateMin) {
+                translation = translateMin;
+                if (translateLimitsRevertOn && ((translationChanged & 1) > 0)) {
+                    reversedTranslationOn = !reversedTranslationOn;
+                }
+                if (translateLimitsRevertKey && ((translationChanged & 2) > 0)) {
+                    reversedTranslationKey = !reversedTranslationKey;
+                }
+                if (translateLimitsOff) {
+                    on = false;
+                    updateState();
+                }
+            }
+            if (translation > translateMax) {
+                translation = translateMax;
+                if (translateLimitsRevertOn && ((translationChanged & 1) > 0)) {
+                    reversedTranslationOn = !reversedTranslationOn;
+                }
+                if (translateLimitsRevertKey && ((translationChanged & 2) > 0)) {
+                    reversedTranslationKey = !reversedTranslationKey;
+                }
+                if (translateLimitsOff) {
+                    on = false;
+                    updateState();
+                }
+            }
+        }
+        if ((rotationChanged != 0) && (rotateJoint || (transform.FindChild("model").FindChild(rotate_model) != null))) {
+            if (rotateJoint) {
+                SoftJointLimit tmp = ((ConfigurableJoint)attachJoint).lowAngularXLimit;
+                tmp.limit = (invertSymmetry ? (isSymmMaster() ? 1 : -1) : 1) * (rotation - rotationDelta);
+                print("Joint limit = " + tmp.limit);
+                ((ConfigurableJoint)attachJoint).lowAngularXLimit = ((ConfigurableJoint)attachJoint).highAngularXLimit = tmp;
+                rotationLast = rotation;
+            } else {
+                Quaternion curRot = Quaternion.AngleAxis((invertSymmetry ? (isSymmMaster() ? 1 : -1) : 1) * rotation, rotateAxis);
+                transform.FindChild("model").FindChild(rotate_model).localRotation = curRot;
+            }
+            rotationChanged = 0;
+        }
+        if ((translationChanged != 0) && (translateJoint || (transform.FindChild("model").FindChild(translate_model) != null))) {
+            if (translateJoint) {
+                ((ConfigurableJoint)attachJoint).targetPosition = -Vector3.right * (translation - translationDelta);
+            } else {
+                transform.FindChild("model").FindChild(translate_model).localPosition = origTranslation + translateAxis.normalized * (translation - translationDelta);
+            }
+            translationChanged = 0;
         }
     }
 
