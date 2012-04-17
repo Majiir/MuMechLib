@@ -324,10 +324,6 @@ class MuMechToggle : MuMechPart {
             return;
         }
 
-        if (Input.GetKeyDown(KeyCode.KeypadMultiply)) {
-            print(MuMech.MuUtils.DumpObject(attachJoint));
-        }
-
         if (setupJoints()) {
             rotationChanged = 4;
             translationChanged = 4;
