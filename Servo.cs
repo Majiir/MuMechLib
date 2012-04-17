@@ -325,7 +325,7 @@ class MuMechServo : MuMechToggle {
 
     private void editorDrawGUI() {
         if (editorWinPos.x == 0 && editorWinPos.y == 0) {
-            editorWinPos = new Rect(Screen.width - 300, 10, 10, 10);
+            editorWinPos = new Rect(Screen.width - 260, 50, 10, 10);
         }
         if (resetWin) {
             winPos = new Rect(winPos.x, winPos.y, 10, 10);
