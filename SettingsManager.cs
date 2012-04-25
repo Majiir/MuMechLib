@@ -65,7 +65,7 @@ namespace MuMech
             }
         }
 
- 
+
         public int value_integer
         {
             get

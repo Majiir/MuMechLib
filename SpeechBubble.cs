@@ -4,12 +4,15 @@ using System.Linq;
 using System.Text;
 using UnityEngine;
 
-namespace MuMech {
-    class SpeechBubble {
+namespace MuMech
+{
+    public class SpeechBubble
+    {
         public Material mat;
         public GUIStyle txtStyle;
 
-        public SpeechBubble(GUIStyle style) {
+        public SpeechBubble(GUIStyle style)
+        {
             mat = new Material("Shader \"Lines/Colored Blended\" {" +
                 "SubShader { Pass { " +
                 "    Blend SrcAlpha OneMinusSrcAlpha " +
@@ -22,7 +25,8 @@ namespace MuMech {
             txtStyle = style;
         }
 
-        public void drawBubble(Vector2 screenPos, string text, Color bgColor) {
+        public void drawBubble(Vector2 screenPos, string text, Color bgColor)
+        {
             float bubbleWidth = 200;
             float bubbleHeight = 50;
             float offsetX = 0;
@@ -51,7 +55,8 @@ namespace MuMech {
             float cY = (Screen.height - (screenPos.y - offsetY)) / (float)Screen.height;
             float rX = centerOffsetX / (float)Screen.width;
             float rY = centerOffsetY / (float)Screen.height;
-            for (int i = 0; i < points; i++) {
+            for (int i = 0; i < points; i++)
+            {
                 GL.Vertex3(cX, cY, 0.1f);
                 GL.Vertex3(cX + rX * Mathf.Cos(dA * i), cY + rY * Mathf.Sin(dA * i), 0.1f);
                 GL.Vertex3(cX + rX * Mathf.Cos(dA * (i + 1)), cY + rY * Mathf.Sin(dA * (i + 1)), 0.1f);

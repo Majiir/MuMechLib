@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 
 /*
-class FlightInfo
+public class FlightInfo
 {
     public double time;                   //current value of Planetarium.GetUniversalTime()
     public double deltaT;                 //time since last fly-by-wire frame

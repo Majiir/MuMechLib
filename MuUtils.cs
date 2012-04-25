@@ -2,16 +2,21 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace MuMech {
-    class MuUtils {
-        public static string ToSI(double d, int digits = 3) {
+namespace MuMech
+{
+    public class MuUtils
+    {
+        public static string ToSI(double d, int digits = 3)
+        {
             double exponent = Math.Log10(Math.Abs(d));
-            if (Math.Abs(d) >= 1) {
-                switch ((int)Math.Floor(exponent)) {
+            if (Math.Abs(d) >= 1)
+            {
+                switch ((int)Math.Floor(exponent))
+                {
                     case 0:
                     case 1:
                     case 2:
-                        return d.ToString("F"+digits);
+                        return d.ToString("F" + digits);
                     case 3:
                     case 4:
                     case 5:
@@ -43,8 +48,11 @@ namespace MuMech {
                     default:
                         return (d / 1e24).ToString("F" + digits) + "Y";
                 }
-            } else if (Math.Abs(d) > 0) {
-                switch ((int)Math.Floor(exponent)) {
+            }
+            else if (Math.Abs(d) > 0)
+            {
+                switch ((int)Math.Floor(exponent))
+                {
                     case -1:
                     case -2:
                     case -3:
@@ -76,52 +84,111 @@ namespace MuMech {
                     default:
                         return (d * 1e24).ToString("F" + digits) + "y";
                 }
-            } else {
+            }
+            else
+            {
                 return "0";
             }
         }
+
+        public static Vector3d Invert(Vector3d vector)
+        {
+            return new Vector3d(1 / vector.x, 1 / vector.y, 1 / vector.z);
+        }
+
+        public static Vector3d Sign(Vector3d vector)
+        {
+            return new Vector3d(Math.Sign(vector.x), Math.Sign(vector.y), Math.Sign(vector.z));
+        }
+
+        public static Vector3d Reorder(Vector3d vector, int order)
+        {
+            switch (order)
+            {
+                case 123:
+                    return new Vector3d(vector.x, vector.y, vector.z);
+                case 132:
+                    return new Vector3d(vector.x, vector.z, vector.y);
+                case 213:
+                    return new Vector3d(vector.y, vector.x, vector.z);
+                case 231:
+                    return new Vector3d(vector.y, vector.z, vector.x);
+                case 312:
+                    return new Vector3d(vector.z, vector.x, vector.y);
+                case 321:
+                    return new Vector3d(vector.z, vector.y, vector.x);
+            }
+            throw new ArgumentException("Invalid order", "order");
+        }
+
+        public static string DumpObject(object obj, int depth = 2, string pref = "")
+        {
+            string tmp = "";
+            if (depth >= 0)
+            {
+                foreach (System.ComponentModel.PropertyDescriptor descriptor in System.ComponentModel.TypeDescriptor.GetProperties(obj))
+                {
+                    string name = descriptor.Name;
+                    object value = descriptor.GetValue(obj);
+                    tmp += pref + ((pref == "") ? "" : ".") + name + " = " + value + "\n";
+                    tmp += DumpObject(value, depth - 1, pref + ((pref == "") ? "" : ".") + name);
+                }
+            }
+            return tmp;
+        }
     }
 
-    public class MovingAverage {
+    public class MovingAverage
+    {
         private double[] store;
         private int storeSize;
         private int nextIndex = 0;
 
-        public double value {
-            get {
+        public double value
+        {
+            get
+            {
                 double tmp = 0;
-                foreach (double i in store) {
+                foreach (double i in store)
+                {
                     tmp += i;
                 }
                 return tmp / storeSize;
             }
-            set {
+            set
+            {
                 store[nextIndex] = value;
                 nextIndex = (nextIndex + 1) % storeSize;
             }
         }
 
-        public MovingAverage(int size = 10, double startingValue = 0) {
+        public MovingAverage(int size = 10, double startingValue = 0)
+        {
             storeSize = size;
             store = new double[size];
             force(startingValue);
         }
 
-        public void force(double newValue) {
-            for (int i = 0; i < storeSize; i++) {
+        public void force(double newValue)
+        {
+            for (int i = 0; i < storeSize; i++)
+            {
                 store[i] = newValue;
             }
         }
 
-        public static implicit operator double(MovingAverage v) {
+        public static implicit operator double(MovingAverage v)
+        {
             return v.value;
         }
 
-        public override string ToString() {
+        public override string ToString()
+        {
             return value.ToString();
         }
 
-        public string ToString(string format) {
+        public string ToString(string format)
+        {
             return value.ToString(format);
         }
     }

@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 
-class MuMechVariableTank : MuMechPart {
+public class MuMechVariableTank : MuMechPart
+{
     public string type = "Generic";
     public float fuel = 100;
     public float dryMass = 1;
@@ -14,19 +15,22 @@ class MuMechVariableTank : MuMechPart {
     public float fullFuel;
     protected VInfoBox fuelBox = null;
 
-    public override void onFlightStateSave(Dictionary<string, KSPParseable> partDataCollection) {
+    public override void onFlightStateSave(Dictionary<string, KSPParseable> partDataCollection)
+    {
         partDataCollection["fuel"] = new KSPParseable(fuel, KSPParseable.Type.FLOAT);
 
         base.onFlightStateSave(partDataCollection);
     }
 
-    public override void onFlightStateLoad(Dictionary<string, KSPParseable> parsedData) {
+    public override void onFlightStateLoad(Dictionary<string, KSPParseable> parsedData)
+    {
         if (parsedData.ContainsKey("fuel")) fuel = parsedData["fuel"].value_float;
 
         base.onFlightStateLoad(parsedData);
     }
 
-    protected override void onPartStart() {
+    protected override void onPartStart()
+    {
         stackIcon.SetIcon(DefaultIcons.FUEL_TANK);
         stackIconGrouping = StackIconGrouping.SAME_TYPE;
 
@@ -36,22 +40,27 @@ class MuMechVariableTank : MuMechPart {
         base.onPartStart();
     }
 
-    protected override void onFlightStart() {
-        stackIcon.SetIconColor((state == PartStates.IDLE) || (state == PartStates.ACTIVE) ?  XKCDColors.BrightTeal : XKCDColors.SlateGrey);
+    protected override void onFlightStart()
+    {
+        stackIcon.SetIconColor((state == PartStates.IDLE) || (state == PartStates.ACTIVE) ? XKCDColors.BrightTeal : XKCDColors.SlateGrey);
 
         base.onFlightStart();
     }
 
-    public override void OnDrawStats() {
+    public override void OnDrawStats()
+    {
         GUILayout.TextArea("Fuel type: " + type + "\nCapacity: " + fuel + "\nDry mass: " + dryMass, GUILayout.ExpandHeight(true));
     }
 
-    public bool getFuel(string fuelType, float amount) {
-        if ((state == PartStates.DEAD) || (fuelType != type) || (fuel <= 0)) {
+    public bool getFuel(string fuelType, float amount)
+    {
+        if ((state == PartStates.DEAD) || (fuelType != type) || (fuel <= 0))
+        {
             return false;
         }
 
-        if (state != PartStates.ACTIVE) {
+        if (state != PartStates.ACTIVE)
+        {
             force_activate();
         }
 
@@ -59,7 +68,8 @@ class MuMechVariableTank : MuMechPart {
         mass = Mathf.Lerp(dryMass, fullMass, fuel / fullFuel);
         explosionPotential = Mathf.Lerp(emptyExplosionPotential, fullExplosionPotential, fuel / fullFuel);
 
-        if (fuelBox == null) {
+        if (fuelBox == null)
+        {
             fuelBox = stackIcon.DisplayInfo();
             fuelBox.SetLength(2.0F);
             XKCDColors.NextColorAlpha = 0.6F;
@@ -73,14 +83,17 @@ class MuMechVariableTank : MuMechPart {
 
         fuelBox.SetValue(fuel / fullFuel);
 
-        if (fuel <= 0) {
-            if (state == PartStates.ACTIVE) {
+        if (fuel <= 0)
+        {
+            if (state == PartStates.ACTIVE)
+            {
                 deactivate();
             }
 
             stackIcon.SetIconColor(XKCDColors.SlateGrey);
 
-            if (fuelBox != null) {
+            if (fuelBox != null)
+            {
                 stackIcon.ClearInfoBoxes();
                 fuelBox = null;
             }

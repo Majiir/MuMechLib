@@ -5,11 +5,28 @@ using System.Text;
 using UnityEngine;
 
 
+/*
+ * Todo:
+ * 
+ * Future:
+ * 
+ * -add a roll input (may require improved attitude controller)
+ * 
+ * Changed:
+ * -added automatic launch window timing to rendezvous with an equatorial target
+ * -added an "Ascent Stats" window with a breakdown of the launch's delta-v costs, total mass to orbit, and launch phase angle
+ * -adding a "heading" input as an alternative to "inclination"
+ * -fixed the cause of ugly, jumpy throttle control when throttle down to prevent overheat
+ * -fixed the "circularize" button that appears during manual throttle control
+ * -fixed a bug where the ship would initially pitch the wrong direction when the turn shape slider was to the right
+ * 
+ */
+
 
 namespace MuMech
 {
 
-    class MechJebModuleAscentAutopilot : ComputerModule
+    public class MechJebModuleAscentAutopilot : ComputerModule
     {
         public MechJebModuleAscentAutopilot(MechJebCore core) : base(core) { }
 
@@ -44,14 +61,8 @@ namespace MuMech
         {
             this.enabled = true;
             core.controlClaim(this);
-            desiredOrbitRadius = part.vessel.mainBody.Radius + orbitAltitude;
+            desiredOrbitAltitude = orbitAltitude;
             desiredInclination = orbitInclination;
-
-            if (orbitAltitude == BEACH_ALTITUDE && orbitInclination == BEACH_INCLINATION)
-            {
-                desiredOrbitAltitudeKmString = "the";
-                desiredInclinationString = "beach";
-            }
 
             //lift off if we haven't yet:
             if (Staging.CurrentStage == Staging.StageCount)
@@ -68,7 +79,7 @@ namespace MuMech
 
         //autopilot modes
         public enum AscentMode { ON_PAD, VERTICAL_ASCENT, GRAVITY_TURN, COAST_TO_APOAPSIS, CIRCULARIZE, DISENGAGED };
-        
+
         String[] modeStrings = new String[] { "Awaiting liftoff", "Vertical ascent", "Gravity turn", "Coasting to apoapsis", "Circularizing", "Disengaged" };
         public AscentMode mode = AscentMode.DISENGAGED;
 
@@ -86,15 +97,32 @@ namespace MuMech
         bool minimized = false;
         bool showHelpWindow = false;
         Texture2D pathTexture = new Texture2D(400, 100);
-        const int PATH_WINDOW_ID = 7790;
-        const int HELP_WINDOW_ID = 7791;
+        Vector2 helpScrollPosition;
 
 
         //things the drive code needs to remember between frames
-        double lastAccelerationTime = 0;
-        int lastAttemptedWarpIndex = 0;
+        //double lastAccelerationTime = 0;
+        //int lastAttemptedWarpIndex = 0;
         double lastStageTime = 0;
 
+        double totalDVExpended;
+        double gravityLosses;
+        double dragLosses;
+        double steeringLosses;
+        double launchTime;
+        double mecoTime;
+        double launchLongitude;
+        double launchMass;
+        double launchPhaseAngle;
+
+        bool timeIgnitionForRendezvous = false;
+        bool choosingRendezvousTarget = false;
+        double predictedLaunchPhaseAngle;
+        String predictedLaunchPhaseAngleString = "";
+        Vessel rendezvousTarget;
+        Vector2 rendezvousTargetScrollPos = new Vector2();
+        double rendezvousIgnitionCountdown;
+        bool rendezvousIgnitionCountdownHolding;
 
         //user inputs
         double _gravityTurnStartAltitude = 10000.0;
@@ -144,14 +172,14 @@ namespace MuMech
             }
         }
 
-        double _desiredOrbitRadius = 700000.0;
-        double desiredOrbitRadius
+        double _desiredOrbitAltitude = 100000.0;
+        double desiredOrbitAltitude
         {
-            get { return _desiredOrbitRadius; }
+            get { return _desiredOrbitAltitude; }
             set
             {
-                if (_desiredOrbitRadius != value) core.settingsChanged = true;
-                _desiredOrbitRadius = value;
+                if (_desiredOrbitAltitude != value) core.settingsChanged = true;
+                _desiredOrbitAltitude = value;
             }
         }
         String desiredOrbitAltitudeKmString = "100";
@@ -167,6 +195,29 @@ namespace MuMech
             }
         }
         String desiredInclinationString = "0";
+
+        double _launchHeading = 90.0;
+        double launchHeading
+        {
+            get { return _launchHeading; }
+            set
+            {
+                if (_launchHeading != value) core.settingsChanged = true;
+                _launchHeading = value;
+            }
+        }
+        String launchHeadingString = "90";
+
+        bool _headingNotInc = false;
+        bool headingNotInc
+        {
+            get { return _headingNotInc; }
+            set
+            {
+                if (_headingNotInc != value) core.settingsChanged = true;
+                _headingNotInc = value;
+            }
+        }
 
         bool _autoStage = true;
         bool autoStage
@@ -247,6 +298,17 @@ namespace MuMech
             }
         }
 
+        protected Rect _statsWindowPos;
+        Rect statsWindowPos
+        {
+            get { return _statsWindowPos; }
+            set
+            {
+                if (_statsWindowPos.x != value.x || _statsWindowPos.y != value.y) core.settingsChanged = true;
+                _statsWindowPos = value;
+            }
+        }
+
         bool _showPathWindow = false;
         bool showPathWindow
         {
@@ -255,6 +317,17 @@ namespace MuMech
             {
                 if (_showPathWindow != value) core.settingsChanged = true;
                 _showPathWindow = value;
+            }
+        }
+
+        bool _showStats = false;
+        bool showStats
+        {
+            get { return _showStats; }
+            set
+            {
+                if (_showStats != value) core.settingsChanged = true;
+                _showStats = value;
             }
         }
 
@@ -269,10 +342,13 @@ namespace MuMech
             gravityTurnEndPitch = settings["AA_gravityTurnEndPitch"].valueDecimal(0.0);
             gravityTurnEndPitchString = gravityTurnEndPitch.ToString();
             gravityTurnShapeExponent = settings["AA_gravityTurnShapeExponent"].valueDecimal(0.4);
-            desiredOrbitRadius = settings["AA_desiredOrbitRadius"].valueDecimal(700000.0);
-            desiredOrbitAltitudeKmString = ((desiredOrbitRadius - part.vessel.mainBody.Radius) / 1000.0).ToString();
+            desiredOrbitAltitude = settings["AA_desiredOrbitAltitude"].valueDecimal(100000.0);
+            desiredOrbitAltitudeKmString = (desiredOrbitAltitude / 1000.0).ToString();
             desiredInclination = settings["AA_desiredInclination"].valueDecimal(0.0);
             desiredInclinationString = desiredInclination.ToString();
+            launchHeading = settings["AA_launchHeading"].valueDecimal(90.0);
+            launchHeadingString = launchHeading.ToString();
+            headingNotInc = settings["AA_headingNotInc"].valueBool(false);
             autoStage = settings["AA_autoStage"].valueBool(true);
             autoStageDelay = settings["AA_autoStageDelay"].valueDecimal(1.0);
             autoStageLimit = settings["AA_autoStageLimit"].valueInteger(0);
@@ -280,6 +356,8 @@ namespace MuMech
             autoStageLimitString = autoStageLimit.ToString();
             autoWarpToApoapsis = settings["AA_autoWarpToApoapsis"].valueBool(true);
             seizeThrottle = settings["AA_seizeThrottle"].valueBool(true);
+            predictedLaunchPhaseAngle = settings["AA_predictedLaunchPhaseAngle"].valueDecimal(0.0);
+            predictedLaunchPhaseAngleString = String.Format("{0:0.00}", predictedLaunchPhaseAngle);
 
             Vector4 savedPathWindowPos = settings["AA_pathWindowPos"].valueVector(new Vector4(Screen.width / 2, Screen.height / 2));
             pathWindowPos = new Rect(savedPathWindowPos.x, savedPathWindowPos.y, 10, 10);
@@ -287,7 +365,11 @@ namespace MuMech
             Vector4 savedHelpWindowPos = settings["AA_helpWindowPos"].valueVector(new Vector4(150, 50));
             helpWindowPos = new Rect(savedHelpWindowPos.x, savedHelpWindowPos.y, 10, 10);
 
+            Vector4 savedStatsWindowPos = settings["AA_statsWindowPos"].valueVector(new Vector4(150, 50));
+            statsWindowPos = new Rect(savedStatsWindowPos.x, savedStatsWindowPos.y, 10, 10);
+
             showPathWindow = settings["AA_showPathWindow"].valueBool(false);
+            showStats = settings["AA_showStatsWindow"].valueBool(false);
         }
 
         public override void onSaveGlobalSettings(SettingsManager settings)
@@ -298,17 +380,21 @@ namespace MuMech
             settings["AA_gravityTurnEndAltitude"].value_decimal = gravityTurnEndAltitude;
             settings["AA_gravityTurnEndPitch"].value_decimal = gravityTurnEndPitch;
             settings["AA_gravityTurnShapeExponent"].value_decimal = gravityTurnShapeExponent;
-            settings["AA_desiredOrbitRadius"].value_decimal = desiredOrbitRadius;
+            settings["AA_desiredOrbitAltitude"].value_decimal = desiredOrbitAltitude;
             settings["AA_desiredInclination"].value_decimal = desiredInclination;
+            settings["AA_launchHeading"].value_decimal = launchHeading;
+            settings["AA_headingNotInc"].value_bool = headingNotInc;
             settings["AA_autoStage"].value_bool = autoStage;
             settings["AA_autoStageDelay"].value_decimal = autoStageDelay;
             settings["AA_autoStageLimit"].value_integer = autoStageLimit;
             settings["AA_autoWarpToApoapsis"].value_bool = autoWarpToApoapsis;
             settings["AA_seizeThrottle"].value_bool = seizeThrottle;
+            settings["AA_predictedLaunchPhaseAngle"].value_decimal = predictedLaunchPhaseAngle;
             settings["AA_pathWindowPos"].value_vector = new Vector4(pathWindowPos.x, pathWindowPos.y);
             settings["AA_helpWindowPos"].value_vector = new Vector4(helpWindowPos.x, helpWindowPos.y);
+            settings["AA_statsWindowPos"].value_vector = new Vector4(statsWindowPos.x, statsWindowPos.y);
             settings["AA_showPathWindow"].value_bool = showPathWindow;
-
+            settings["AA_showStatsWindow"].value_bool = showStats;
         }
 
 
@@ -320,7 +406,7 @@ namespace MuMech
         ////////////////////////////////////////
 
         //controls the ascent path. by "pitch" we mean the pitch of the velocity vector in the rotating frame
-        private double desiredPitch(double altitude)
+        private double unsmoothedDesiredPitch(double altitude)
         {
             if (altitude < gravityTurnStartAltitude) return 90.0;
 
@@ -329,8 +415,13 @@ namespace MuMech
             return Mathf.Clamp((float)(90.0 - Math.Pow((altitude - gravityTurnStartAltitude) / (gravityTurnEndAltitude - gravityTurnStartAltitude), gravityTurnShapeExponent) * (90.0 - gravityTurnEndPitch)), 0.01F, 89.99F);
         }
 
+        private double desiredPitch(double altitude)
+        {
+            return unsmoothedDesiredPitch(altitude);
+        }
+
         //some 3d geometry relates the bearing of our ground velocity with the inclination and the latitude:
-        private double desiredSurfaceAngle(double latitudeRadians)
+        private double desiredSurfaceAngle(double latitudeRadians, double referenceFrameBlend)
         {
             double cosDesiredSurfaceAngle = Math.Cos(desiredInclination * Math.PI / 180) / Math.Cos(latitudeRadians);
             double desiredSurfaceAngle;
@@ -338,8 +429,6 @@ namespace MuMech
             {
                 if (Math.Abs(desiredInclination) < 90) desiredSurfaceAngle = 0;
                 else desiredSurfaceAngle = Math.PI;
-                if (Math.Abs(desiredInclination) < 90) desiredSurfaceAngle = latitudeRadians;
-                else desiredSurfaceAngle = Math.PI - latitudeRadians;
             }
             else
             {
@@ -359,17 +448,11 @@ namespace MuMech
         {
             if (mode == AscentMode.DISENGAGED) return;
 
-            if (mode == AscentMode.ON_PAD &&
-                (Staging.CurrentStage != Staging.StageCount))
-            {
-                mode = AscentMode.VERTICAL_ASCENT;
-            }
+            if (mode == AscentMode.ON_PAD && Staging.CurrentStage <= Staging.LastStage) mode = AscentMode.VERTICAL_ASCENT;
 
-            handleAutoStaging();
-
+            driveAutoStaging();
 
             //given the mode, determine what direction the rocket should be pointing
-            Vector3d desiredThrustVector = Vector3d.zero;
             switch (mode)
             {
                 case AscentMode.VERTICAL_ASCENT:
@@ -390,18 +473,14 @@ namespace MuMech
             }
 
 
-            //limit the throttle if something is close to overheating
-            double maxTempRatio = ARUtils.maxTemperatureRatio(part.vessel);
-            if (maxTempRatio > 0.95 && seizeThrottle)
-            {
-                s.mainThrottle = Mathf.Clamp(s.mainThrottle, 0.0F, (float)((1 - maxTempRatio) / 0.95));
-            }
+            driveLimitOverheat(s);
 
+            driveRendezvousStuff(s);
         }
 
 
         //auto-stage when safe
-        private void handleAutoStaging()
+        private void driveAutoStaging()
         {
             //if autostage enabled, and if we are not waiting on the pad, and if we didn't immediately just fire the previous stage
             if (autoStage && mode != AscentMode.ON_PAD && Staging.CurrentStage > 0 && Staging.CurrentStage > autoStageLimit
@@ -424,6 +503,63 @@ namespace MuMech
                     }
                 }
             }
+        }
+
+        void driveLimitOverheat(FlightCtrlState s)
+        {
+            //limit the throttle if something is close to overheating
+            double maxTempRatio = ARUtils.maxTemperatureRatio(part.vessel);
+            double tempSafetyMargin = 0.05;
+            if (maxTempRatio > (1 - tempSafetyMargin) && seizeThrottle)
+            {
+                s.mainThrottle = Mathf.Clamp(s.mainThrottle, 0.0F, (float)((1 - maxTempRatio) / tempSafetyMargin));
+            }
+        }
+
+        void driveRendezvousStuff(FlightCtrlState s)
+        {
+            if (mode != AscentMode.DISENGAGED && mode != AscentMode.ON_PAD)
+            {
+                totalDVExpended += vesselState.deltaT * vesselState.thrustAccel(s.mainThrottle);
+                gravityLosses += vesselState.deltaT * Vector3d.Dot(-vesselState.velocityVesselSurfaceUnit, vesselState.gravityForce);
+                gravityLosses -= vesselState.deltaT * Vector3d.Dot(vesselState.velocityVesselSurfaceUnit, vesselState.up * vesselState.radius * Math.Pow(1 / part.vessel.mainBody.rotationPeriod, 2));
+                steeringLosses += vesselState.deltaT * vesselState.thrustAccel(s.mainThrottle) * (1 - Vector3.Dot(vesselState.velocityVesselSurfaceUnit, vesselState.forward));
+                dragLosses += vesselState.deltaT * ARUtils.computeDragAccel(vesselState.CoM, vesselState.velocityVesselOrbit, vesselState.massDrag / vesselState.mass, part.vessel.mainBody).magnitude;
+
+                double netVelocity = totalDVExpended - gravityLosses - steeringLosses - dragLosses;
+
+                double targetCircularPeriod = 2 * Math.PI * Math.Sqrt(Math.Pow(part.vessel.mainBody.Radius + desiredOrbitAltitude, 3) / part.vessel.mainBody.gravParameter);
+                double longitudeTraversed = (vesselState.longitude - launchLongitude) + 360 * (vesselState.time - launchTime) / part.vessel.mainBody.rotationPeriod;
+                launchPhaseAngle = ARUtils.clampDegrees(360 * (vesselState.time - launchTime) / targetCircularPeriod - longitudeTraversed);
+            }
+
+            if (mode == AscentMode.ON_PAD && timeIgnitionForRendezvous && rendezvousTarget != null)
+            {
+                double phaseAngle = ARUtils.clampDegrees(vesselState.longitude - part.vessel.mainBody.GetLongitude(rendezvousTarget.transform.position));
+                double[] warpLookaheadTimes = new double[] { 10, 15, 20, 25, 50, 100, 1000, 10000 };
+
+                rendezvousIgnitionCountdown = ARUtils.clampDegrees(phaseAngle - predictedLaunchPhaseAngle) / 360 * rendezvousTarget.orbit.period;
+
+                if (rendezvousIgnitionCountdown < 0.0 && rendezvousIgnitionCountdown > -1.0)
+                {
+                    mode = AscentMode.VERTICAL_ASCENT;
+                    Staging.ActivateNextStage();
+                }
+                else
+                {
+                    if (rendezvousIgnitionCountdown < 0)
+                    {
+                        rendezvousIgnitionCountdown = rendezvousTarget.orbit.period / 2;
+                        rendezvousIgnitionCountdownHolding = true;
+                    }
+                    else
+                    {
+                        rendezvousIgnitionCountdownHolding = false;
+                    }
+                    core.warpTo(this, rendezvousIgnitionCountdown, warpLookaheadTimes);
+                }
+            }
+
         }
 
 
@@ -475,11 +611,12 @@ namespace MuMech
             //during the vertical ascent we just thrust straight up at max throttle
             if (seizeThrottle) s.mainThrottle = efficientThrottle();
             if (vesselState.altitudeASL > gravityTurnStartAltitude) mode = AscentMode.GRAVITY_TURN;
-            if (seizeThrottle && part.vessel.orbit.ApR > desiredOrbitRadius)
+            if (seizeThrottle && part.vessel.orbit.ApA > desiredOrbitAltitude)
             {
-                lastAccelerationTime = vesselState.time;
+                //lastAccelerationTime = vesselState.time;
                 mode = AscentMode.COAST_TO_APOAPSIS;
             }
+
             core.attitudeTo(Vector3d.up, MechJebCore.AttitudeReference.SURFACE_NORTH, this);
         }
 
@@ -488,10 +625,10 @@ namespace MuMech
         void driveGravityTurn(FlightCtrlState s)
         {
             //stop the gravity turn when our apoapsis reaches the desired altitude
-            if (seizeThrottle && part.vessel.orbit.ApR > desiredOrbitRadius)
+            if (seizeThrottle && part.vessel.orbit.ApA > desiredOrbitAltitude)
             {
                 mode = AscentMode.COAST_TO_APOAPSIS;
-                lastAccelerationTime = vesselState.time;
+                //lastAccelerationTime = vesselState.time;
                 core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
                 return;
             }
@@ -505,7 +642,7 @@ namespace MuMech
 
             if (seizeThrottle)
             {
-                float gentleThrottle = throttleToRaiseApoapsis(part.vessel.orbit.ApR, desiredOrbitRadius);
+                float gentleThrottle = throttleToRaiseApoapsis(part.vessel.orbit.ApR, desiredOrbitAltitude + part.vessel.mainBody.Radius);
                 if (gentleThrottle < 1.0F)
                 {
                     //when we are bringing down the throttle to make the apoapsis accurate, we're liable to point in weird
@@ -525,18 +662,19 @@ namespace MuMech
             //when our maximum possible apoapsis, given our orbital energy, is desiredOrbitalRadius, then we are
             //fully in the non-rotating reference frame and thus doing the correct calculations to get the right inclination
             double GM = vesselState.localg * vesselState.radius * vesselState.radius;
-            double potentialDifferenceWithApoapsis = GM / vesselState.radius - GM / desiredOrbitRadius;
+            double potentialDifferenceWithApoapsis = GM / vesselState.radius - GM / (part.vessel.mainBody.Radius + desiredOrbitAltitude);
             double verticalSpeedForDesiredApoapsis = Math.Sqrt(2 * potentialDifferenceWithApoapsis);
-            double referenceFrameBlend = vesselState.speedOrbital / verticalSpeedForDesiredApoapsis;
-            referenceFrameBlend = Mathf.Clamp((float)referenceFrameBlend, 0.0F, 1.0F);
+            //double referenceFrameBlend = Mathf.Clamp((float)(1.5 * vesselState.speedOrbital / verticalSpeedForDesiredApoapsis - 0.5), 0.0F, 1.0F);
+            double referenceFrameBlend = Mathf.Clamp((float)(vesselState.speedOrbital / verticalSpeedForDesiredApoapsis), 0.0F, 1.0F);
 
             Vector3d actualVelocityUnit = ((1 - referenceFrameBlend) * vesselState.velocityVesselSurfaceUnit
                                                + referenceFrameBlend * vesselState.velocityVesselOrbitUnit).normalized;
 
             //minus sign is there because somewhere a sign got flipped in integrating with MechJeb
-            double surfaceAngle = -desiredSurfaceAngle(vesselState.latitude * Math.PI / 180.0);
+            double surfaceAngle = -desiredSurfaceAngle(vesselState.latitude * Math.PI / 180.0, referenceFrameBlend);
             Vector3d desiredSurfaceHeading = Math.Cos(surfaceAngle) * vesselState.east + Math.Sin(surfaceAngle) * vesselState.north;
             double desPitch = desiredPitch(vesselState.altitudeASL);
+            //double desPitch = 90;
             Vector3d desiredVelocityUnit = Math.Cos(desPitch * Math.PI / 180) * desiredSurfaceHeading
                                                 + Math.Sin(desPitch * Math.PI / 180) * vesselState.up;
 
@@ -552,6 +690,7 @@ namespace MuMech
             desiredThrustVector = desiredVelocityUnit;
             Vector3d steerOffset = velocityKP * difficulty * velocityError;
             double maxOffset = 10 * Math.PI / 180;
+            if (desPitch > 80) maxOffset = (90 - desPitch) * Math.PI / 180;
             if (steerOffset.magnitude > maxOffset) steerOffset = maxOffset * steerOffset.normalized;
             desiredThrustVector += steerOffset;
             desiredThrustVector = desiredThrustVector.normalized;
@@ -616,65 +755,44 @@ namespace MuMech
                 return;
             }
 
-            if (part.vessel.orbit.ApR < desiredOrbitRadius - 1000.0)
+            if (part.vessel.orbit.ApA < desiredOrbitAltitude - 1000.0)
             {
                 mode = AscentMode.GRAVITY_TURN;
                 core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
                 return;
             }
 
-            //handle time warp
-            double[] lookaheadTimes = new double[] { 0, 5, 90, 90, 120, 200, 500, 5000 };
-            //reduce time warp if we are close to apoapsis, or just past apoapsis, 
-            //or if our apoapsis is too low
-            if (part.vessel.orbit.timeToAp < lookaheadTimes[TimeWarp.CurrentRateIndex]
-                || part.vessel.orbit.period - part.vessel.orbit.timeToAp < 10
-                || (seizeThrottle && part.vessel.orbit.ApR < desiredOrbitRadius - 10.0))
-            {
-                if (TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(TimeWarp.CurrentRateIndex - 1);
-            }
-            else
-            {
-                //if we just tried to increase warp rate but find ourselves at a lower warp, probably the 
-                //game switched us back down because it thought there was acceleration. start a cooldown before trying
-                //again (or else the game starts lagging hard, switching in and out of physics)
-                if (TimeWarp.CurrentRateIndex < lastAttemptedWarpIndex)
-                {
-                    lastAccelerationTime = vesselState.time;
-                    lastAttemptedWarpIndex = TimeWarp.CurrentRateIndex;
-                }
-
-                //if we are allowed to warp higher, do so
-                double[] altLimits = new double[] { 0, 0, part.vessel.mainBody.maxAtmosphereAltitude, part.vessel.mainBody.maxAtmosphereAltitude, part.vessel.mainBody.Radius * 0.25, part.vessel.mainBody.Radius * 0.5, part.vessel.mainBody.Radius * 1.0, part.vessel.mainBody.Radius * 2.0 };
-                if (autoWarpToApoapsis
-                    && TimeWarp.CurrentRateIndex < 7
-                    && altLimits[TimeWarp.CurrentRateIndex + 1] < vesselState.altitudeASL
-                    && part.vessel.orbit.timeToAp > lookaheadTimes[TimeWarp.CurrentRateIndex + 1]
-                    && vesselState.time - lastAccelerationTime > 5.0)
-                {
-                    lastAttemptedWarpIndex = TimeWarp.CurrentRateIndex + 1;
-                    TimeWarp.SetRate(TimeWarp.CurrentRateIndex + 1);
-                    lastAccelerationTime = vesselState.time;
-                }
-            }
 
             //if we are running physics, we can do burns if the apoapsis falls, and we can maintain our orientation in preparation for circularization
             //if our Ap is too low and we are pointing reasonably along our velocity
-            if (TimeWarp.CurrentRateIndex <= 1
-                && part.vessel.orbit.ApR < desiredOrbitRadius - 10)
-            {
-                lastAccelerationTime = vesselState.time;
-                core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
+            double[] lookaheadTimes = new double[] { 0, 5, 90, 90, 120, 200, 500, 5000 };
 
-                if (Vector3d.Dot(vesselState.forward, vesselState.velocityVesselOrbitUnit) > 0.75)
+            if (part.vessel.orbit.ApA < desiredOrbitAltitude - 10)
+            {
+                if (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate)
                 {
-                    s.mainThrottle = throttleToRaiseApoapsis(part.vessel.orbit.ApR, desiredOrbitRadius);
+                    //lastAccelerationTime = vesselState.time;
+                    core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
+
+                    if (Vector3d.Dot(vesselState.forward, vesselState.velocityVesselOrbitUnit) > 0.75)
+                    {
+                        s.mainThrottle = throttleToRaiseApoapsis(part.vessel.orbit.ApR, desiredOrbitAltitude + part.vessel.mainBody.Radius);
+                    }
+                    else
+                    {
+                        s.mainThrottle = 0.0F;
+                    }
+                    return;
                 }
                 else
                 {
-                    s.mainThrottle = 0.0F;
+                    core.warpPhysics(this);
                 }
-                return;
+            }
+            else if (autoWarpToApoapsis)
+            {
+                //if we're allowed to autowarp, do so
+                core.warpTo(this, part.vessel.orbit.timeToAp, lookaheadTimes);
             }
 
             //if we are out of the atmosphere and have a high enough apoapsis and aren't near apoapsis, play dead to 
@@ -683,7 +801,7 @@ namespace MuMech
             if (autoWarpToApoapsis
                 && vesselState.altitudeASL > part.vessel.mainBody.maxAtmosphereAltitude
                 && part.vessel.orbit.timeToAp > lookaheadTimes[2]
-                && part.vessel.orbit.ApR > desiredOrbitRadius - 10)
+                && part.vessel.orbit.ApA > desiredOrbitAltitude - 10)
             {
                 //don't steer
                 core.attitudeDeactivate(this);
@@ -704,7 +822,7 @@ namespace MuMech
 
         void driveCircularizationBurn(FlightCtrlState s)
         {
-            if (part.vessel.orbit.ApR < desiredOrbitRadius - 1000.0)
+            if (part.vessel.orbit.ApA < desiredOrbitAltitude - 1000.0)
             {
                 mode = AscentMode.GRAVITY_TURN;
                 core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
@@ -720,10 +838,13 @@ namespace MuMech
                 Math.Min(part.vessel.orbit.timeToAp, part.vessel.orbit.period - part.vessel.orbit.timeToAp)
                 || vesselState.speedOrbital > circularSpeed + 1.0) //makes sure we don't keep burning forever if we are somehow way off course
             {
+                predictedLaunchPhaseAngle = launchPhaseAngle;
+                predictedLaunchPhaseAngleString = String.Format("{0:00}", predictedLaunchPhaseAngle);
+                mecoTime = vesselState.time;
                 s.mainThrottle = 0.0F;
                 turnOffSteering();
                 core.controlRelease(this);
-                enabled = false;
+                if (!showStats) enabled = false;
                 return;
             }
 
@@ -744,7 +865,7 @@ namespace MuMech
             //test the following modification: pitch = 0 if throttle < 1
             double desiredThrustPitch = thrustPitchForZeroVerticalAcc(orbitalRadius, horizontalSpeed, thrustAcceleration, verticalSpeed);
 
-            
+
 
             //Vector3d desiredThrustVector = Math.Cos(desiredThrustPitch) * groundHeading + Math.Sin(desiredThrustPitch) * vesselState.up;
             Vector3d desiredThrustVector = Math.Cos(desiredThrustPitch) * Vector3d.forward + Math.Sin(desiredThrustPitch) * Vector3d.up;
@@ -765,19 +886,23 @@ namespace MuMech
             GUI.skin = HighLogic.Skin;
             if (minimized)
             {
-                windowPos = GUILayout.Window(baseWindowID, windowPos, WindowGUI, "Ascent", GUILayout.Width(100), GUILayout.Height(30));
+                windowPos = GUILayout.Window(baseWindowID, windowPos, WindowGUI, "Ascent", GUILayout.Width(100), GUILayout.Height((choosingRendezvousTarget ? 600 : 30)));
             }
             else
             {
                 windowPos = GUILayout.Window(baseWindowID, windowPos, WindowGUI, "Ascent Autopilot", GUILayout.Width(200), GUILayout.Height(100));
                 if (showPathWindow)
                 {
-                    pathWindowPos = GUILayout.Window(PATH_WINDOW_ID, pathWindowPos, PathWindowGUI, "Ascent Path", GUILayout.Width(300), GUILayout.Height(100));
+                    pathWindowPos = GUILayout.Window(baseWindowID + 1, pathWindowPos, PathWindowGUI, "Ascent Path", GUILayout.Width(300), GUILayout.Height(100));
+                }
+                if (showStats)
+                {
+                    statsWindowPos = GUILayout.Window(baseWindowID + 2, statsWindowPos, StatsWindowGUI, "Ascent Stats", GUILayout.Width(225), GUILayout.Height(250));
                 }
             }
             if (showHelpWindow)
             {
-                helpWindowPos = GUILayout.Window(HELP_WINDOW_ID, helpWindowPos, HelpWindowGUI, "Ascent Autopilot Help", GUILayout.Width(400), GUILayout.Height(500));
+                helpWindowPos = GUILayout.Window(baseWindowID + 3, helpWindowPos, HelpWindowGUI, "Ascent Autopilot Help", GUILayout.Width(400), GUILayout.Height(500));
             }
 
         }
@@ -834,9 +959,7 @@ namespace MuMech
 
                 if (seizeThrottle)
                 {
-                    double orbitAltKm = (desiredOrbitRadius - part.vessel.mainBody.Radius) / 1000.0;
-                    orbitAltKm = doGUITextInput("Orbit altitude: ", 100.0F, desiredOrbitAltitudeKmString, 30.0F, "km", 30.0F, out desiredOrbitAltitudeKmString, orbitAltKm);
-                    desiredOrbitRadius = part.vessel.mainBody.Radius + orbitAltKm * 1000.0;
+                    desiredOrbitAltitude = ARUtils.doGUITextInput("Orbit altitude: ", 100.0F, desiredOrbitAltitudeKmString, 30.0F, "km", 30.0F, out desiredOrbitAltitudeKmString, desiredOrbitAltitude, 1000.0);
                 }
                 else
                 {
@@ -853,20 +976,71 @@ namespace MuMech
                     if (GUILayout.Button("Circularize"))
                     {
                         mode = AscentMode.COAST_TO_APOAPSIS;
+                        desiredOrbitAltitude = part.vessel.orbit.ApA;
                     }
                 }
 
-                desiredInclination = doGUITextInput("Orbit inclination: ", 100.0F, desiredInclinationString, 30.0F, "°", 30.0F, out desiredInclinationString, desiredInclination);
+                GUIStyle angleStyle = new GUIStyle(GUI.skin.button);
+                angleStyle.padding.top = angleStyle.padding.bottom = 3;
 
+                if (headingNotInc)
+                {
+                    GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+                    if (GUILayout.Button("Heading:", angleStyle, GUILayout.Width(100.0F)))
+                    {
+                        headingNotInc = false;
+                    }
+
+                    double parsedHeading;
+                    if (Double.TryParse(launchHeadingString, out parsedHeading))
+                    {
+                        if (parsedHeading != launchHeading)
+                        {
+                            launchHeading = parsedHeading;
+                            double launchSurfaceAngle = ARUtils.clampDegrees(90 - launchHeading);
+                            desiredInclination = 180 / Math.PI * Math.Sign(launchSurfaceAngle) *
+                                  Math.Acos(Math.Cos(launchSurfaceAngle * Math.PI / 180) * Math.Cos(vesselState.latitude * Math.PI / 180));
+                            desiredInclinationString = String.Format("{0:0}", desiredInclination);
+                        }
+                    }
+                    launchHeadingString = GUILayout.TextField(launchHeadingString, GUILayout.MinWidth(30.0F));
+                    GUILayout.Label("°", GUILayout.Width(30.0F));
+                    GUILayout.EndHorizontal();
+
+                }
+                else
+                {
+                    GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+
+                    double parsedInc;
+                    if (Double.TryParse(desiredInclinationString, out parsedInc)) desiredInclination = parsedInc;
+
+                    if (GUILayout.Button("Inclination:", angleStyle, GUILayout.Width(100.0F)))
+                    {
+                        headingNotInc = true;
+                        double cosSurfaceAngle = Math.Cos(desiredInclination * Math.PI / 180) / Math.Cos(vesselState.latitude * Math.PI / 180);
+                        cosSurfaceAngle = Mathf.Clamp((float)cosSurfaceAngle, -1.0F, 1.0F);
+                        double surfaceAngle = 180 / Math.PI * Math.Sign(desiredInclination) * Math.Acos(cosSurfaceAngle);
+                        launchHeading = (360 + 90 - surfaceAngle) % 360;
+                        launchHeadingString = String.Format("{0:0}", launchHeading);
+                    }
+
+                    desiredInclinationString = GUILayout.TextField(desiredInclinationString, GUILayout.MinWidth(30.0F));
+                    GUILayout.Label("°", GUILayout.Width(30.0F));
+                    GUILayout.EndHorizontal();
+
+                    //desiredInclination = ARUtils.doGUITextInput("Orbit inclination: ", 100.0F, desiredInclinationString, 30.0F, "°", 30.0F,
+                    //                                            out desiredInclinationString, desiredInclination);
+                }
                 seizeThrottle = GUILayout.Toggle(seizeThrottle, "Auto-throttle?");
 
                 autoStage = GUILayout.Toggle(autoStage, "Auto-stage?");
 
                 if (autoStage)
                 {
-                    autoStageDelay = doGUITextInput("Stage delay: ", 100.0F, autoStageDelayString, 30.0F, "s", 30.0F, out autoStageDelayString, autoStageDelay);
+                    autoStageDelay = ARUtils.doGUITextInput("Stage delay: ", 100.0F, autoStageDelayString, 30.0F, "s", 30.0F, out autoStageDelayString, autoStageDelay);
 
-                    autoStageLimit = doGUITextInput("Stop at stage #", 100.0F, autoStageLimitString, 30.0F, "", 30.0F, out autoStageLimitString, autoStageLimit);
+                    autoStageLimit = ARUtils.doGUITextInput("Stop at stage #", 100.0F, autoStageLimitString, 30.0F, "", 30.0F, out autoStageLimitString, autoStageLimit);
                 }
 
                 bool newAutoWarp = GUILayout.Toggle(autoWarpToApoapsis, "Auto-warp toward apoapsis?", new GUIStyle(GUI.skin.toggle));
@@ -883,10 +1057,63 @@ namespace MuMech
 
                 GUILayout.EndHorizontal();
 
-                showPathWindow = GUILayout.Toggle(showPathWindow, "Edit ascent path", new GUIStyle(GUI.skin.button));
+                GUILayout.BeginHorizontal();
+
+                showPathWindow = GUILayout.Toggle(showPathWindow, "Edit path", new GUIStyle(GUI.skin.button));
+
+                showStats = GUILayout.Toggle(showStats, "Stats", new GUIStyle(GUI.skin.button));
+
+                GUILayout.EndHorizontal();
+
+                if (part.vessel.Landed)
+                {
+                    timeIgnitionForRendezvous = GUILayout.Toggle(timeIgnitionForRendezvous, "Time launch to rendezvous?");
+                    if (timeIgnitionForRendezvous)
+                    {
+                        predictedLaunchPhaseAngle = ARUtils.doGUITextInput("Known LPA:", 100.0F, predictedLaunchPhaseAngleString, 30.0F, "°", 30.0F, out predictedLaunchPhaseAngleString, predictedLaunchPhaseAngle);
+
+                        GUILayout.Label("Target vessel: " + (rendezvousTarget == null ? "none" : rendezvousTarget.vesselName));
+
+                        choosingRendezvousTarget = GUILayout.Toggle(choosingRendezvousTarget, "Choose target", new GUIStyle(GUI.skin.button));
+
+                        if (choosingRendezvousTarget)
+                        {
+                            rendezvousTargetScrollPos = GUILayout.BeginScrollView(rendezvousTargetScrollPos, GUILayout.Height(200));
+
+                            GUILayout.BeginVertical();
+                            foreach (Vessel v in FlightGlobals.Vessels)
+                            {
+                                if (v != part.vessel && !v.Landed && !v.Splashed && v.mainBody == part.vessel.mainBody)
+                                {
+                                    if (GUILayout.Button(v.vesselName + String.Format(" @ {0:0}km", part.vessel.mainBody.GetAltitude(v.transform.position) / 1000.0)))
+                                    {
+                                        rendezvousTarget = v;
+                                        choosingRendezvousTarget = false;
+                                    }
+                                }
+                            }
+                            GUILayout.EndVertical();
+
+                            GUILayout.EndScrollView();
+                        }
+
+                        if (rendezvousTarget != null)
+                        {
+                            if (mode == AscentMode.DISENGAGED)
+                            {
+                                GUILayout.Label("Engage to begin countdown");
+                            }
+                            else if (mode == AscentMode.ON_PAD)
+                            {
+                                GUILayout.Label(String.Format("T-{0:0} seconds and " + (rendezvousIgnitionCountdownHolding ? "holding" : "counting"), Math.Ceiling(rendezvousIgnitionCountdown)));
+                            }
+                        }
+                    }
+                }
 
 
             }
+
 
             GUILayout.EndVertical();
 
@@ -894,6 +1121,99 @@ namespace MuMech
 
         }
 
+
+        private void StatsWindowGUI(int windowID)
+        {
+            GUILayout.BeginVertical();
+
+            String leftTimeString;
+            String rightTimeString;
+            if (part.vessel.Landed)
+            {
+                leftTimeString = "Time:";
+                rightTimeString = "---";
+            }
+            else if (mode == AscentMode.DISENGAGED)
+            {
+                leftTimeString = "MECO at";
+                rightTimeString = String.Format("T+{0:0} s", mecoTime - launchTime);
+            }
+            else
+            {
+                leftTimeString = "Time:";
+                rightTimeString = String.Format("T+{0:0} s", vesselState.time - launchTime);
+            }
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(leftTimeString, GUILayout.ExpandWidth(true));
+            GUILayout.Label(rightTimeString);
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Total Δv expended:", GUILayout.ExpandWidth(true));
+            GUILayout.Label(String.Format("{0:0} m/s", totalDVExpended));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(String.Format("Gravity losses - {0:0.0}%", (totalDVExpended == 0 ? 0 : 100 * gravityLosses / totalDVExpended)), GUILayout.ExpandWidth(true));
+            GUILayout.Label(String.Format("{0:0} m/s", gravityLosses));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(String.Format("Drag losses - {0:0.0}%", (totalDVExpended == 0 ? 0 : 100 * dragLosses / totalDVExpended)), GUILayout.ExpandWidth(true));
+            GUILayout.Label(String.Format("{0:0} m/s", dragLosses));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(String.Format("Steering losses - {0:0.0}%", (totalDVExpended == 0 ? 0 : 100 * steeringLosses / totalDVExpended)), GUILayout.ExpandWidth(true));
+            GUILayout.Label(String.Format("{0:0} m/s", steeringLosses));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(String.Format("Speed gained - {0:0.0}%", (totalDVExpended == 0 ? 0 : 100 * vesselState.velocityVesselSurface.magnitude / totalDVExpended)), GUILayout.ExpandWidth(true));
+            GUILayout.Label(String.Format("{0:0} m/s", vesselState.velocityVesselSurface.magnitude));
+            GUILayout.EndHorizontal();
+
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Launch mass:", GUILayout.ExpandWidth(true));
+            GUILayout.Label(String.Format("{0:0.0} tons", launchMass));
+            GUILayout.EndHorizontal();
+
+
+            /*            GUILayout.Label(String.Format("Total Δv expended: {0:0} m/s", totalDVExpended));
+                        GUILayout.Label(String.Format("Gravity losses: {0:0} m/s ({1:0.0}%)", gravityLosses, (totalDVExpended == 0 ? 0 : gravityLosses / totalDVExpended * 100)));
+                        GUILayout.Label(String.Format("Drag losses: {0:0} m/s ({1:0.0}%)", dragLosses, (totalDVExpended == 0 ? 0 : dragLosses / totalDVExpended * 100)));
+                        GUILayout.Label(String.Format("Steering losses: {0:0} m/s ({1:0.0}%)", steeringLosses, (totalDVExpended == 0 ? 0 : steeringLosses / totalDVExpended * 100)));
+                        GUILayout.Label(String.Format("Speed gained: {0:0} m/s ({1:0.0}%)", vesselState.velocityVesselSurface.magnitude, (totalDVExpended == 0 ? 0 : vesselState.speedSurface / totalDVExpended * 100)));
+                        GUILayout.Label(String.Format("Launch mass: {0:0.0} tons", launchMass));
+              */
+            if (mode == AscentMode.DISENGAGED && !part.vessel.Landed)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Mass to orbit:", GUILayout.ExpandWidth(true));
+                GUILayout.Label(String.Format("{0:0.0} tons", vesselState.mass));
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Launch phase angle:°", GUILayout.ExpandWidth(true));
+                GUILayout.Label(String.Format("{0:0.00}°", launchPhaseAngle));
+                GUILayout.EndHorizontal();
+            }
+            else
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Current mass:", GUILayout.ExpandWidth(true));
+                GUILayout.Label(String.Format("{0:0.0} tons", vesselState.mass));
+                GUILayout.EndHorizontal();
+
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Launch phase angle:°", GUILayout.ExpandWidth(true));
+                GUILayout.Label("...");
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndVertical();
+
+            GUI.DragWindow();
+        }
 
 
         private void PathWindowGUI(int windowID)
@@ -905,14 +1225,14 @@ namespace MuMech
             double oldGravityTurnShapeExponent = gravityTurnShapeExponent;
             double oldGravityTurnEndPitch = gravityTurnEndPitch;
 
-            double turnStartAltKm = gravityTurnStartAltitude / 1000.0;
-            turnStartAltKm = doGUITextInput("Turn start altitude: ", 300.0F, gravityTurnStartAltitudeKmString, 30.0F, "km", 30.0F, out gravityTurnStartAltitudeKmString, turnStartAltKm);
-            gravityTurnStartAltitude = turnStartAltKm * 1000.0;
+            gravityTurnStartAltitude = ARUtils.doGUITextInput("Turn start altitude: ", 300.0F, gravityTurnStartAltitudeKmString, 30.0F, "km", 30.0F,
+                                                              out gravityTurnStartAltitudeKmString, gravityTurnStartAltitude, 1000.0);
 
-            double turnEndAltKm = gravityTurnEndAltitude / 1000.0;
-            turnEndAltKm = doGUITextInput("Turn end altitude: ", 300.0F, gravityTurnEndAltitudeKmString, 30.0F, "km", 30.0F, out gravityTurnEndAltitudeKmString, turnEndAltKm);
-            gravityTurnEndAltitude = turnEndAltKm * 1000.0;
-            gravityTurnEndPitch = doGUITextInput("Final pitch: ", 300.0F, gravityTurnEndPitchString, 30.0F, "°", 30.0F, out gravityTurnEndPitchString, gravityTurnEndPitch);
+            gravityTurnEndAltitude = ARUtils.doGUITextInput("Turn end altitude: ", 300.0F, gravityTurnEndAltitudeKmString, 30.0F, "km", 30.0F,
+                                                            out gravityTurnEndAltitudeKmString, gravityTurnEndAltitude, 1000.0);
+
+            gravityTurnEndPitch = ARUtils.doGUITextInput("Final flight path angle: ", 300.0F, gravityTurnEndPitchString, 30.0F, "°", 30.0F,
+                                                         out gravityTurnEndPitchString, gravityTurnEndPitch);
 
             GUILayout.BeginHorizontal();
             GUILayout.Label("Turn shape: ");
@@ -935,70 +1255,55 @@ namespace MuMech
         }
 
 
-        Vector2 scrollPosition;
         private void HelpWindowGUI(int windowID)
         {
-            scrollPosition = GUILayout.BeginScrollView(scrollPosition);
+            helpScrollPosition = GUILayout.BeginScrollView(helpScrollPosition);
             GUILayout.Label("MechJeb's ascent autopilot will fly a ship completely automatically from the launchpad to any desired circular orbit around Kerbin. Engage the autopilot on the launchpad to place it in the \"Awaiting liftoff\" state. Launch your ship as usual and the ascent autopilot will fly it to orbit and then automatically disengage. Disengage the autopilot at any time to regain manual control of the ship.\n\n" +
-    "During flight, the autopilot operates in several sequential modes. During the \"vertical ascent\" it flies directly upwards until it reaches a certain altitude. Then, during the \"gravity turn,\" the ship pitches over and starts accelerating horizontally. When the apoapsis of the ship's orbit reaches the desired altitude, the engines turn off for the \"coast to apoapsis.\" When the apoapsis is reached, the ship executes one final \"circularizing\" burn to make the orbit circular. The ascent autopilot will automatically disengage after the circularization burn is complete. \n\n" +
-    "Before launch, you can set the desired final altitude and inclination of the orbit in the appropriate text fields. Zero inclination gives a normal eastward equatorial orbit. +90 or -90 degrees inclination give a polar orbit starting out north or south, respectively. 180 degrees gives a westward equatorial orbit.\n\n" +
-    "By default the autopilot will automatically fire the next stage of the rocket when the current one burns out. This can be turned off by toggling \"Auto-stage?\". \n\n" +
-    "By default the autopilot will use time warp to speed the coast to apoapsis phase. This can be turned off by toggling \"Auto-warp toward apoapsis?\".\n\n" +
-    "By default the autopilot will seize exclusive control of the throttle while it is engaged. If you want to control the throttle during the vertcal ascent and gravity turn you can turn off \"Auto-throttle?\". This will replace the orbit altitude input with a display of your current apoapsis and periapsis, and a \"Circularize\" button. When your apoapsis is at the desired height, you can press \"Circularize\" and the autopilot will again take control of the throttle for the coast to apoapsis and circularization burn at the apoapsis. \n\n" +
-    "The \"Edit Ascent Path\" button brings up a window that lets you customize the path the ascent will take through the atmosphere. \"Turn start altitude\" is the height to which the rocket will ascend vertically before starting to turn over. The turn stops once the ship rises above the \"Turn end alitude,\" after which the autopilot will attempt to keep the pitch at the angle given in the next text box. Here \"pitch\" means the angle the velocity vector (yellow circle on the navball) makes with the horizon. In between, the graph shows the path of the ascent.The exact shape of the path can be varied with the \"Turn shape\" slider.\n\n" +
-    "The ascent autopilot can be used for ascent from the Mun, as follows. With the autopilot disengaged, first enter the desired orbit parameters and edit the ascent path to one reasonable for launching in a vacuum. As a suggestion, try a turn start altitude of 0km, a turn end altitude of 5km, and a final pitch of 0 degrees. This launch profile turns horizontal to thrust for orbit almost immediately, since there is no atmosphere to climb above.  When you are ready, engage the autopilot and it will immediately begin the ascent to munar orbit.\n\n");
+"----------Flight modes----------\n\n" +
+"During flight, the autopilot operates in several sequential modes. They are:\n\n" +
+"Vertical Ascent - The rocket first flies straight up until it reaches a certain altitude.\n\n" +
+"Gravity Turn - The rocket then gradually pitches over and starts accelerating horizontally. This phase ends when the apoapsis reaches the desired orbit altitude.\n\n" +
+"Coast To Apoapsis - Then the engines turn off while the rocket and the rocket coasts until it reaches apoapsis, at the desired orbit altitude.\n\n" +
+"Circularization Burn - When the apoapsis is reached, the ship executes one final burn to make the orbit circular. The ascent autopilot will automatically disengage after the circularization burn is complete. \n\n" +
+"----------Inputs----------\n\n" +
+"Orbit Altitude - The altitude of the circular orbit into which the ascent autopilot will insert the rocket.\n\n" +
+"Inclination - The inclination of the orbit into which the autopilot will insert the rocket. Zero inclination gives a normal eastward equatorial orbit. +90 or -90 degrees inclination give a polar orbit starting out north or south, respectively. 180 degrees gives a westward equatorial orbit. Clicking \"Inclination\" will turn this input into a Heading input.\n\n" +
+"Heading - The heading of the desired orbit. When launching from the equator (where KSC is located), 90 heading is an eastward equatorial orbit, 0 is a northward polar orbit, 180  southward polar orbit, and 270 a westward equatorial orbit. Clicking \"Heading\" will turn this input into an Inclination input.\n\n" +
+"Auto-Stage? - By default the autopilot will automatically fire the next stage of the rocket when the current one burns out. This can be turned off by toggling \"Auto-stage?\". \n\n" +
+"Auto-Warp Toward Apoapsis? - By default the autopilot will use time warp to speed the coast to apoapsis phase. This can be turned off by toggling \"Auto-warp toward apoapsis?\".\n\n" +
+"Auto-Throttle? - By default the autopilot will seize exclusive control of the throttle while it is engaged. If you want to control the throttle during the vertcal ascent and gravity turn you can turn off \"Auto-throttle?\". This will replace the orbit altitude input with a display of your current apoapsis and periapsis, and a \"Circularize\" button. When your apoapsis is at the desired height, you can press \"Circularize\" and the autopilot will again take control of the throttle for the coast to apoapsis and circularization burn at the apoapsis. \n\n" +
+"----------Time Launch To Rendezvous----------\n\n" +
+"The ascent autopilot can time your launch to approximately rendezvous with a target vessel. Properly used, you can end up about 1km from the target immediately after the circularization burn. This will only work if the target vessel is in a circular, equatorial (0 inclination/90 heading) orbit. First, you will need to do a \"practice launch\" so that the ascent autopilot can learn the timing of the ascent for you particular rocket and the particular descired altitude. For the practice launch, don't select \"Time launch to rendezvous?\". Just enter the altitude of the target as the orbit altitude and launch as usual. At the end of each ascent (after the circularization burn), the autopilot calculates and remembers a \"launch phase angle\" (LPA). This phase angle lets the autopilot time future ascents of the same rocket to the same altitude. Note that changing the rocket, the orbit altitude or the ascent path will change the launch phase angle and you will have to do another practice launch.\n\n" +
+"After the practice launch, restart the flight or start a new one with the same rocket. Leave the ascent autopilot disengaged. Select \"Time Launch To Rendezvous?\". The \"Known LPA\" field will already be filled in with the launch phase angle calculated on the previous launch. Click \"Choose target\" and then select the vessel you are trying to rendezvous with. Again, this vessel must be in a circular equatorial orbit or the rendezvous won't work well.  Now hit \"Engage\" and the ascent autopilot will begin a countdown to launch. At T-0 seconds the autopilot will automatically ignite the first stage and begin the ascent. If all goes well, the circularization burn will end near the target vessel.\n\n" +
+"Note: To speed the countdown, the autopilot will use time warp. Many rockets respond poorly to time warping on the pad, and will fall apart when coming out of warp. If this is happening to your rocket, there's little you can do but try to build a sturdier rocket.\n\n" +
+"----------Customizing the ascent path----------\n\n" +
+"The \"Edit path\" button brings up a window that lets you customize the path the ascent will take through the atmosphere. The ascent path window includes a graph of the planned path, which will change to reflect changes in any of the parameters below.\n\n" +
+"Turn Start Altitude - the height to which the rocket will ascend vertically before starting to turn over. \n\n" +
+"Turn End Altitude - the height at which the rocket stops pitching over, above which the rocket will maintain the \"Final flight path angle\"\n\n" +
+"Final Flight Path Angle - The flight path angle is the angle the velocity vector makes with the horizon. The Final Flight Path Angle is the flight path angle the rocket will maintain above the Turn End Altitude.\n\n" +
+"Turn Shape - This slider adjusts a continuous parameter describing the shape of the pitchover trajectory. Try varying it to see its effect on the path.\n\n" +
+"----------Ascent stats----------\n\n" +
+"The \"Stats\" button brings up a window with some statistics about the ascent. \n\n" +
+"Time - this counts up from launch and will stop counting at MECO (main engine cut-off) at the end of the circularization burn, and so can be used to time the launch.\n\n" +
+"Total Δv Expended - a measure of the fuel cost of the launch. For a given rocket ascending to a given orbit, a more efficient ascent is one that expends less Δv. \"Gravity losses\", \"drag losses\", \"steering losses\", and \"speed gained\" break down what the Δv was expended on.\n\n" +
+"Gravity Losses - a measure of how much thrust was spent fighting against gravity instead of accelerating the rocket. Gravity losses are high when the rocket is travelling straight up and zero when the rocket is travelling horizontally.\n\n" +
+"Drag Losses - a measure of how much thrust was spent fighting against atmospheric drag instead of accelerating the rocket. Drag losses are high when the rocket is travelling fast in the dense lower atmosphere and low when the rocket is travelling slowly or is above the dense lower air. \n\n" +
+"Steering Losses - a measure of how much thrust was spent turning the rocket instead of accelerating it. Steering losses are high when the rocket is thrusting at a significant angle to its current velocity, and zero when it is thrusting parallel to its current velocity.\n\n" +
+"Speed Gained - the net acceleration of the rocket during the launch. Note that this is computed in the rotating reference frame of the planet.\n\n" +
+"Launch Mass - the mass the rocket had at launch.\n\n" +
+"Current Mass/Mass to Orbit - the current mass of the rocket. Mass to orbit is another measure of the ascent's efficiency: a more efficient ascent of the same rocket will bring a greater mass to orbit, since less fuel will have been burned. \n\n" +
+"Launch phase angle - If the rocket had been launched this angle ahead of a another vessel that was already in the target orbit, the two ships would meet at the end of the circularization burn. This angle is used in timing launches to achieve orbital rendezvous.\n\n" +
+"----------Ascent from the Mun----------\n\n" +
+"The ascent autopilot can be used for ascent from the Mun, as follows. With the autopilot disengaged, first enter the desired orbit parameters and edit the ascent path to one reasonable for launching in a vacuum. As a suggestion, try a turn start altitude of 0km, a turn end altitude of 5km, and a final flight path angle of 0 degrees. This launch profile turns horizontal to thrust for orbit almost immediately, since there is no atmosphere to climb above.  When you are ready, engage the autopilot and it will immediately begin the ascent to munar orbit."
+);
             GUILayout.EndScrollView();
             GUI.DragWindow();
         }
 
 
-        //utility function that displays a horizontal row of label-textbox-label and parses the number in the textbox
-        double doGUITextInput(String leftText, float leftWidth, String currentText, float textWidth, String rightText, float rightWidth, out String newText, double defaultValue)
-        {
-            GUIStyle leftLabelStyle = new GUIStyle(GUI.skin.label);
 
-            double value;
-            if (Double.TryParse(currentText, out value))
-            {
-                leftLabelStyle.normal.textColor = Color.white;
-            }
-            else
-            {
-                leftLabelStyle.normal.textColor = Color.yellow;
-                value = defaultValue;
-            }
-            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
-            GUILayout.Label(leftText, leftLabelStyle, GUILayout.Width(leftWidth));
-            newText = GUILayout.TextField(currentText, GUILayout.MinWidth(textWidth));
-            GUILayout.Label(rightText, GUILayout.Width(rightWidth));
-            GUILayout.EndHorizontal();
 
-            return value;
-        }
 
-        //utility function that displays a horizontal row of label-textbox-label and parses the number in the textbox
-        int doGUITextInput(String leftText, float leftWidth, String currentText, float textWidth, String rightText, float rightWidth, out String newText, int defaultValue)
-        {
-            GUIStyle leftLabelStyle = new GUIStyle(GUI.skin.label);
-
-            int value;
-            if (int.TryParse(currentText, out value))
-            {
-                leftLabelStyle.normal.textColor = Color.white;
-            }
-            else
-            {
-                leftLabelStyle.normal.textColor = Color.yellow;
-                value = defaultValue;
-            }
-            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
-            GUILayout.Label(leftText, leftLabelStyle, GUILayout.Width(leftWidth));
-            newText = GUILayout.TextField(currentText, GUILayout.MinWidth(textWidth));
-            GUILayout.Label(rightText, GUILayout.Width(rightWidth));
-            GUILayout.EndHorizontal();
-
-            return value;
-        }
 
         //redraw the picture of the planned flight path
         private void updatePathTexture()
@@ -1046,8 +1351,8 @@ namespace MuMech
         private void initializeInternals()
         {
             mode = AscentMode.DISENGAGED;
-            lastAccelerationTime = 0;
-            lastAttemptedWarpIndex = 0;
+            //lastAccelerationTime = 0;
+            //lastAttemptedWarpIndex = 0;
             lastStageTime = 0;
         }
 
@@ -1055,6 +1360,14 @@ namespace MuMech
         ///////////////////////////////////////
         // VESSEL HISTORY UPDATES ///////////// 
         ///////////////////////////////////////
+
+
+        public override void onLiftOff()
+        {
+            launchTime = vesselState.time;
+            launchLongitude = vesselState.longitude;
+            launchMass = vesselState.mass;
+        }
 
 
         public override void onPartStart()

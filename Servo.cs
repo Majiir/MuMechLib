@@ -5,16 +5,19 @@ using System.Runtime.Serialization.Formatters.Binary;
 using System.IO;
 using UnityEngine;
 
-namespace MuMech {
+namespace MuMech
+{
     [Serializable()]
-    class ServoGroup {
+    public class ServoGroup
+    {
         public string name = "New Group";
         public string key = "9";
         public string revKey = "0";
     }
 }
 
-class MuMechServo : MuMechToggle {
+public class MuMechServo : MuMechToggle
+{
     protected bool configsLoaded = false;
     protected bool loadFromSFS = false;
 
@@ -30,38 +33,48 @@ class MuMechServo : MuMechToggle {
     protected static Vector2 editorScroll = Vector2.zero;
     protected static bool resetWin = false;
 
-    public override void onFlightStateLoad(Dictionary<string, KSPParseable> parsedData) {
+    public override void onFlightStateLoad(Dictionary<string, KSPParseable> parsedData)
+    {
         loadFromSFS = true;
         base.onFlightStateLoad(parsedData);
     }
 
-    protected override void onPartAttach(Part parent) {
-        if (groups.Count == 0) {
+    protected override void onPartAttach(Part parent)
+    {
+        if (groups.Count == 0)
+        {
             groups.Add(new MuMech.ServoGroup());
         }
-        if (group < 0) {
+        if (group < 0)
+        {
             group = groups.Count - 1;
         }
 
         base.onPartAttach(parent);
     }
 
-    protected override void onPartDetach() {
+    protected override void onPartDetach()
+    {
         resetWin = true;
         base.onPartDetach();
     }
 
-    public override void onBackup() {
-        if (configsLoaded) {
+    public override void onBackup()
+    {
+        if (configsLoaded)
+        {
             Dictionary<string, object> settings = new Dictionary<string, object>();
             settings["name"] = servoName;
             settings["rot"] = rotation;
             settings["trans"] = translation;
-            if (group >= 0) {
+            if (group >= 0)
+            {
                 settings["group"] = groups[group].name;
                 settings["key"] = groups[group].key;
                 settings["revkey"] = groups[group].revKey;
-            } else {
+            }
+            else
+            {
                 settings["group"] = "";
                 settings["key"] = "";
                 settings["revkey"] = "";
@@ -74,34 +87,43 @@ class MuMechServo : MuMechToggle {
         base.onBackup();
     }
 
-    protected override void onEditorUpdate() {
-        if (GUIController == null) {
+    protected override void onEditorUpdate()
+    {
+        if (GUIController == null)
+        {
             RenderingManager.AddToPostDrawQueue(0, new Callback(editorDrawGUI));
             GUIController = this;
         }
-        if (group < 0) {
+        if (group < 0)
+        {
             group = groups.Count - 1;
         }
         base.onEditorUpdate();
     }
 
-    protected override void onPartStart() {
+    protected override void onPartStart()
+    {
         allServos.Add(this);
-        if (customPartData != "") {
+        if (customPartData != "")
+        {
             BinaryFormatter f = new BinaryFormatter();
             Dictionary<string, object> settings = (Dictionary<string, object>)f.Deserialize(new MemoryStream(Convert.FromBase64String(customPartData.Replace("*", "="))));
             servoName = (string)settings["name"];
             string groupName = (string)settings["group"];
-            if (groupName != "") {
+            if (groupName != "")
+            {
                 bool found = false;
-                for (int i = 0; i < groups.Count; i++) {
-                    if (groups[i].name == groupName) {
+                for (int i = 0; i < groups.Count; i++)
+                {
+                    if (groups[i].name == groupName)
+                    {
                         found = true;
                         group = i;
                         break;
                     }
                 }
-                if (!found) {
+                if (!found)
+                {
                     MuMech.ServoGroup newGroup = new MuMech.ServoGroup();
                     newGroup.name = groupName;
                     newGroup.key = (string)settings["key"];
@@ -110,11 +132,13 @@ class MuMechServo : MuMechToggle {
                     group = groups.Count - 1;
                 }
             }
-            if (group >= 0) {
+            if (group >= 0)
+            {
                 rotateKey = translateKey = groups[group].key;
                 revRotateKey = revTranslateKey = groups[group].revKey;
             }
-            if (!loadFromSFS) {
+            if (!loadFromSFS)
+            {
                 rotation = (float)settings["rot"];
                 translation = (float)settings["trans"];
             }
@@ -123,17 +147,21 @@ class MuMechServo : MuMechToggle {
         base.onPartStart();
     }
 
-    protected override void onFlightStart() {
-        if (group >= 0) {
+    protected override void onFlightStart()
+    {
+        if (group >= 0)
+        {
             rotateKey = translateKey = groups[group].key;
             revRotateKey = revTranslateKey = groups[group].revKey;
         }
         base.onFlightStart();
     }
 
-    protected override void onPartDestroy() {
+    protected override void onPartDestroy()
+    {
         allServos.Remove(this);
-        if (GUIController == this) {
+        if (GUIController == this)
+        {
             RenderingManager.RemoveFromPostDrawQueue(0, new Callback(editorDrawGUI));
             RenderingManager.RemoveFromPostDrawQueue(0, new Callback(drawGUI));
             GUIController = null;
@@ -142,21 +170,26 @@ class MuMechServo : MuMechToggle {
         base.onPartDestroy();
     }
 
-    protected override void onPartFixedUpdate() {
-        foreach (Part p in vessel.parts) {
-            if (p.attachJoint != null) {
+    protected override void onPartFixedUpdate()
+    {
+        foreach (Part p in vessel.parts)
+        {
+            if (p.attachJoint != null)
+            {
                 p.attachJoint.breakForce = breakingForce;
                 p.attachJoint.breakTorque = breakingTorque;
             }
         }
-        if ((vessel != null) && (GUIController == null)) {
+        if ((vessel != null) && (GUIController == null))
+        {
             RenderingManager.AddToPostDrawQueue(0, new Callback(drawGUI));
             GUIController = this;
         }
         base.onPartFixedUpdate();
     }
 
-    private void editorWindowGUI(int windowID) {
+    private void editorWindowGUI(int windowID)
+    {
         editorScroll = GUILayout.BeginScrollView(editorScroll, false, false, GUILayout.MaxHeight(Screen.height / 2));
 
         GUILayout.BeginVertical();
@@ -164,34 +197,43 @@ class MuMechServo : MuMechToggle {
         GUILayout.BeginHorizontal();
         GUILayout.Label("Group Name", GUILayout.ExpandWidth(true));
         GUILayout.Label("Keys", GUILayout.Width(40));
-        if (groups.Count > 1) {
+        if (groups.Count > 1)
+        {
             GUILayout.Space(60);
         }
         GUILayout.EndHorizontal();
 
-        for (int i = 0; i < groups.Count; i++) {
+        for (int i = 0; i < groups.Count; i++)
+        {
             MuMech.ServoGroup grp = groups[i];
 
             GUILayout.BeginHorizontal();
             string tmp = GUILayout.TextField(grp.name, GUILayout.ExpandWidth(true));
-            if (grp.name != tmp) {
+            if (grp.name != tmp)
+            {
                 grp.name = tmp;
                 configsLoaded = true;
             }
             tmp = GUILayout.TextField(grp.key, GUILayout.Width(20));
-            if (grp.key != tmp) {
+            if (grp.key != tmp)
+            {
                 grp.key = tmp;
                 configsLoaded = true;
             }
             tmp = GUILayout.TextField(grp.revKey, GUILayout.Width(20));
-            if (grp.revKey != tmp) {
+            if (grp.revKey != tmp)
+            {
                 grp.revKey = tmp;
                 configsLoaded = true;
             }
-            if (i > 0) {
-                if (GUILayout.Button("Remove", GUILayout.Width(60))) {
-                    foreach (MuMechServo servo in allServos) {
-                        if (servo.group >= i) {
+            if (i > 0)
+            {
+                if (GUILayout.Button("Remove", GUILayout.Width(60)))
+                {
+                    foreach (MuMechServo servo in allServos)
+                    {
+                        if (servo.group >= i)
+                        {
                             servo.group--;
                         }
                     }
@@ -199,8 +241,11 @@ class MuMechServo : MuMechToggle {
                     resetWin = true;
                     return;
                 }
-            } else {
-                if (groups.Count > 1) {
+            }
+            else
+            {
+                if (groups.Count > 1)
+                {
                     GUILayout.Space(60);
                 }
             }
@@ -215,36 +260,50 @@ class MuMechServo : MuMechToggle {
             GUILayout.BeginHorizontal();
             GUILayout.Label("Servo Name", GUILayout.ExpandWidth(true));
             GUILayout.Label("Rotate", GUILayout.Width(40));
-            if (groups.Count > 1) {
+            if (groups.Count > 1)
+            {
                 GUILayout.Label("Group", GUILayout.Width(40));
             }
             GUILayout.EndHorizontal();
 
-            foreach (MuMechServo servo in allServos) {
-                if (servo.group == i) {
+            foreach (MuMechServo servo in allServos)
+            {
+                if (servo.group == i)
+                {
                     GUILayout.BeginHorizontal();
                     servo.servoName = GUILayout.TextField(servo.servoName, GUILayout.ExpandWidth(true));
-                    if (GUILayout.Button("<", GUILayout.Width(20))) {
+                    if (GUILayout.Button("<", GUILayout.Width(20)))
+                    {
                         servo.transform.RotateAround(servo.transform.up, Mathf.PI / 4);
                     }
-                    if (GUILayout.Button(">", GUILayout.Width(20))) {
+                    if (GUILayout.Button(">", GUILayout.Width(20)))
+                    {
                         servo.transform.RotateAround(servo.transform.up, -Mathf.PI / 4);
                     }
-                    if (groups.Count > 1) {
-                        if (i > 0) {
-                            if (GUILayout.Button("/\\", GUILayout.Width(20))) {
+                    if (groups.Count > 1)
+                    {
+                        if (i > 0)
+                        {
+                            if (GUILayout.Button("/\\", GUILayout.Width(20)))
+                            {
                                 servo.group--;
                                 configsLoaded = true;
                             }
-                        } else {
+                        }
+                        else
+                        {
                             GUILayout.Space(20);
                         }
-                        if (i < (groups.Count - 1)) {
-                            if (GUILayout.Button("\\/", GUILayout.Width(20))) {
+                        if (i < (groups.Count - 1))
+                        {
+                            if (GUILayout.Button("\\/", GUILayout.Width(20)))
+                            {
                                 servo.group++;
                                 configsLoaded = true;
                             }
-                        } else {
+                        }
+                        else
+                        {
                             GUILayout.Space(20);
                         }
                     }
@@ -257,7 +316,8 @@ class MuMechServo : MuMechToggle {
             GUILayout.EndHorizontal();
         }
 
-        if (GUILayout.Button("Add new Group")) {
+        if (GUILayout.Button("Add new Group"))
+        {
             groups.Add(new MuMech.ServoGroup());
         }
 
@@ -268,28 +328,37 @@ class MuMechServo : MuMechToggle {
         GUI.DragWindow();
     }
 
-    private void WindowGUI(int windowID) {
+    private void WindowGUI(int windowID)
+    {
         GUILayout.BeginVertical();
 
-        for (int i = 0; i < groups.Count; i++) {
+        for (int i = 0; i < groups.Count; i++)
+        {
             List<MuMechServo> groupServos = new List<MuMechServo>();
-            foreach (MuMechServo servo in allServos) {
-                if ((servo.group == i) && (servo.vessel == FlightGlobals.ActiveVessel)) {
+            foreach (MuMechServo servo in allServos)
+            {
+                if ((servo.group == i) && (servo.vessel == FlightGlobals.ActiveVessel))
+                {
                     groupServos.Add(servo);
                 }
             }
-            if (groupServos.Count > 0) {
+            if (groupServos.Count > 0)
+            {
                 GUILayout.BeginHorizontal();
 
                 GUILayout.Label(groups[i].name, GUILayout.ExpandWidth(true));
-                if (GUILayout.RepeatButton("<", GUILayout.Width(20))) {
-                    foreach (MuMechServo servo in groupServos) {
+                if (GUILayout.RepeatButton("<", GUILayout.Width(20)))
+                {
+                    foreach (MuMechServo servo in groupServos)
+                    {
                         servo.rotate(servo.keyRotateSpeed * TimeWarp.fixedDeltaTime * (servo.reversedRotationKey ? -1 : 1));
                         servo.translate(servo.keyTranslateSpeed * TimeWarp.fixedDeltaTime * (servo.reversedTranslationKey ? -1 : 1));
                     }
                 }
-                if (GUILayout.RepeatButton(">", GUILayout.Width(20))) {
-                    foreach (MuMechServo servo in groupServos) {
+                if (GUILayout.RepeatButton(">", GUILayout.Width(20)))
+                {
+                    foreach (MuMechServo servo in groupServos)
+                    {
                         servo.rotate(servo.keyRotateSpeed * TimeWarp.fixedDeltaTime * (servo.reversedRotationKey ? 1 : -1));
                         servo.translate(servo.keyTranslateSpeed * TimeWarp.fixedDeltaTime * (servo.reversedTranslationKey ? 1 : -1));
                     }
@@ -304,16 +373,21 @@ class MuMechServo : MuMechToggle {
         GUI.DragWindow();
     }
 
-    private void drawGUI() {
+    private void drawGUI()
+    {
         bool servosPresent = false;
-        foreach (MuMechServo servo in allServos) {
-            if (servo.vessel == FlightGlobals.ActiveVessel) {
+        foreach (MuMechServo servo in allServos)
+        {
+            if (servo.vessel == FlightGlobals.ActiveVessel)
+            {
                 servosPresent = true;
                 break;
             }
         }
-        if (servosPresent && InputLockManager.IsUnlocked(ControlTypes.THROTTLE)) {
-            if (winPos.x == 0 && winPos.y == 0) {
+        if (servosPresent && InputLockManager.IsUnlocked(ControlTypes.THROTTLE))
+        {
+            if (winPos.x == 0 && winPos.y == 0)
+            {
                 winPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
             }
 
@@ -323,11 +397,14 @@ class MuMechServo : MuMechToggle {
         }
     }
 
-    private void editorDrawGUI() {
-        if (editorWinPos.x == 0 && editorWinPos.y == 0) {
+    private void editorDrawGUI()
+    {
+        if (editorWinPos.x == 0 && editorWinPos.y == 0)
+        {
             editorWinPos = new Rect(Screen.width - 260, 50, 10, 10);
         }
-        if (resetWin) {
+        if (resetWin)
+        {
             winPos = new Rect(winPos.x, winPos.y, 10, 10);
             resetWin = false;
         }

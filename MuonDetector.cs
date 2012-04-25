@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 
-class MuMechMuonDetector : Part {
+public class MuMechMuonDetector : Part
+{
     static double MIN_PING_DIST = 15000;
     static double MIN_PING_TIME = 0.2;
     static double MAX_PING_TIME = 5;
@@ -19,17 +20,20 @@ class MuMechMuonDetector : Part {
 
     public bool detectorActive = false;
 
-    protected override void onFlightStart() {
+    protected override void onFlightStart()
+    {
         ping = gameObject.AddComponent<AudioSource>();
         WWW www = new WWW("file://" + KSPUtil.ApplicationRootPath.Replace("\\", "/") + "Parts/mumech_MuonDetector/ping.wav");
-        if ((ping != null) && (www != null)) {
+        if ((ping != null) && (www != null))
+        {
             ping.clip = www.GetAudioClip(false);
             ping.volume = 0;
             ping.Stop();
         }
 
         disk = transform.Find("model/disk");
-        if (disk != null) {
+        if (disk != null)
+        {
             MIN_PING_DIST = 150000;
             MIN_PING_TIME = 0.2;
             MAX_PING_TIME = 15;
@@ -47,42 +51,53 @@ class MuMechMuonDetector : Part {
         RenderingManager.AddToPostDrawQueue(3, new Callback(drawGUI));
     }
 
-    public override void OnDrawStats() {
-        GUILayout.TextArea("Range: " + ((transform.Find("model/disk") == null)?"15":"150") + "km", GUILayout.ExpandHeight(true));
+    public override void OnDrawStats()
+    {
+        GUILayout.TextArea("Range: " + ((transform.Find("model/disk") == null) ? "15" : "150") + "km", GUILayout.ExpandHeight(true));
         base.OnDrawStats();
     }
 
-    protected override void onPartDestroy() {
+    protected override void onPartDestroy()
+    {
         RenderingManager.RemoveFromPostDrawQueue(3, new Callback(drawGUI));
         base.onPartDestroy();
     }
 
-    protected override void onPartFixedUpdate() {
-        if ((pingLight != null) && (Planetarium.GetUniversalTime() - lastPing > 1)) {
+    protected override void onPartFixedUpdate()
+    {
+        if ((pingLight != null) && (Planetarium.GetUniversalTime() - lastPing > 1))
+        {
             led.renderer.material.color = Color.black;
             led.renderer.material.shader = originalLensShader;
             pingLight.enabled = false;
         }
-        if (detectorActive) {
+        if (detectorActive)
+        {
             Animation[] muns = vessel.mainBody.GetComponentsInChildren<Animation>();
             double nearest = double.PositiveInfinity;
-            foreach (Animation mun in muns) {
+            foreach (Animation mun in muns)
+            {
                 double dist = (mun.transform.position - vessel.transform.position).magnitude;
-                if (dist < nearest) {
+                if (dist < nearest)
+                {
                     nearest = dist;
                 }
             }
-            if (nearest < MIN_PING_DIST) {
+            if (nearest < MIN_PING_DIST)
+            {
                 double pingTime = MIN_PING_TIME + (MAX_PING_TIME - MIN_PING_TIME) * nearest / MIN_PING_DIST;
-                if (Planetarium.GetUniversalTime() - lastPing >= pingTime) {
+                if (Planetarium.GetUniversalTime() - lastPing >= pingTime)
+                {
                     lastPing = Planetarium.GetUniversalTime();
-                    if (ping.isPlaying) {
+                    if (ping.isPlaying)
+                    {
                         ping.Stop();
                     }
                     ping.volume = 0.2F;
                     ping.Play();
 
-                    if (pingLight != null) {
+                    if (pingLight != null)
+                    {
                         pingLight.color = (lastDist > nearest) ? Color.green : Color.red;
                         led.renderer.material.color = pingLight.color;
                         led.renderer.material.shader = Shader.Find("Self-Illumin/Specular");
@@ -91,17 +106,20 @@ class MuMechMuonDetector : Part {
                     lastDist = nearest;
                 }
             }
-            if (disk != null) {
+            if (disk != null)
+            {
                 disk.RotateAroundLocal(Vector3d.up, 1 * Mathf.Deg2Rad * TimeWarp.fixedDeltaTime);
             }
         }
         base.onPartFixedUpdate();
     }
 
-    private void WindowGUI(int windowID) {
+    private void WindowGUI(int windowID)
+    {
         GUILayout.BeginVertical();
 
-        if (GUILayout.Button(detectorActive ? "Deactivate" : "Activate")) {
+        if (GUILayout.Button(detectorActive ? "Deactivate" : "Activate"))
+        {
             detectorActive = !detectorActive;
         }
 
@@ -110,9 +128,12 @@ class MuMechMuonDetector : Part {
         GUI.DragWindow();
     }
 
-    private void drawGUI() {
-        if ((vessel == FlightGlobals.ActiveVessel) && isControllable && InputLockManager.IsUnlocked(ControlTypes.THROTTLE)) {
-            if (winPos.x == 0 && winPos.y == 0) {
+    private void drawGUI()
+    {
+        if ((vessel == FlightGlobals.ActiveVessel) && isControllable && InputLockManager.IsUnlocked(ControlTypes.THROTTLE))
+        {
+            if (winPos.x == 0 && winPos.y == 0)
+            {
                 winPos = new Rect(Screen.width / 2, Screen.height / 2, 10, 10);
             }
 

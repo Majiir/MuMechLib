@@ -7,7 +7,7 @@ using UnityEngine;
 namespace MuMech
 {
 
-    class ARUtils
+    public class ARUtils
     {
         public const double G = 6.674E-11; //this seems to be the value the game uses
 
@@ -72,7 +72,7 @@ namespace MuMech
         public static bool hasActiveOrIdleEngineOrTankDescendant(Part p)
         {
             if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine)) return true;
-            if((p is FuelTank) && ((FuelTank)p).fuel > 0) return true; 
+            if ((p is FuelTank) && ((FuelTank)p).fuel > 0) return true;
             foreach (Part child in p.children)
             {
                 if (hasActiveOrIdleEngineOrTankDescendant(child)) return true;
@@ -151,7 +151,7 @@ namespace MuMech
             }
             return ret;
         }
-        
+
 
         //formula for drag seems to be drag force = (1/2) * (air density / 125) * (mass * max_drag) * (airspeed)^2
         //so drag acceleration is (1/2) * (air density / 125) * (average max_drag) * (airspeed)^2
@@ -205,6 +205,92 @@ namespace MuMech
         }
 
 
+        //utility function that displays a horizontal row of label-textbox-label and parses the number in the textbox
+        public static double doGUITextInput(String leftText, float leftWidth, String currentText, float textWidth,
+                                            String rightText, float rightWidth, out String newText, double defaultValue, double multiplier = 1.0)
+        {
+            GUIStyle leftLabelStyle = new GUIStyle(GUI.skin.label);
+
+            double value;
+            if (Double.TryParse(currentText, out value))
+            {
+                leftLabelStyle.normal.textColor = Color.white;
+                value *= multiplier;
+            }
+            else
+            {
+                leftLabelStyle.normal.textColor = Color.yellow;
+                value = defaultValue;
+            }
+            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+            GUILayout.Label(leftText, leftLabelStyle, GUILayout.Width(leftWidth));
+            newText = GUILayout.TextField(currentText, GUILayout.MinWidth(textWidth));
+            GUILayout.Label(rightText, GUILayout.Width(rightWidth));
+            GUILayout.EndHorizontal();
+
+            return value;
+        }
+
+
+        //utility function that displays a horizontal row of label-textbox-label and parses the number in the textbox
+        public static int doGUITextInput(String leftText, float leftWidth, String currentText, float textWidth, String rightText, float rightWidth, out String newText, int defaultValue)
+        {
+            GUIStyle leftLabelStyle = new GUIStyle(GUI.skin.label);
+
+            int value;
+            if (int.TryParse(currentText, out value))
+            {
+                leftLabelStyle.normal.textColor = Color.white;
+            }
+            else
+            {
+                leftLabelStyle.normal.textColor = Color.yellow;
+                value = defaultValue;
+            }
+            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+            GUILayout.Label(leftText, leftLabelStyle, GUILayout.Width(leftWidth));
+            newText = GUILayout.TextField(currentText, GUILayout.MinWidth(textWidth));
+            GUILayout.Label(rightText, GUILayout.Width(rightWidth));
+            GUILayout.EndHorizontal();
+
+            return value;
+        }
+
+        public static double PQSSurfaceHeight(double latitude, double longitude, CelestialBody body)
+        {
+            Vector3d pqsRadialVector = QuaternionD.AngleAxis(longitude, Vector3d.down) * QuaternionD.AngleAxis(latitude, Vector3d.forward) * Vector3d.right;
+            return body.pqsController.GetSurfaceHeight(pqsRadialVector) - body.pqsController.radius;
+        }
+
+        public static double PQSAltitude(Vector3d pos, CelestialBody body)
+        {
+            return (pos - body.position).magnitude - body.Radius - PQSSurfaceHeight(body.GetLatitude(pos), body.GetLongitude(pos), body);
+        }
+
+
+        public static GUIStyle buttonStyle(Color color)
+        {
+            GUIStyle style = new GUIStyle(GUI.skin.button);
+            style.onNormal.textColor = style.onFocused.textColor = style.onHover.textColor = style.onActive.textColor = color;
+            style.normal.textColor = color;
+            return style;
+        }
+
+        public static GUIStyle labelStyle(Color color)
+        {
+            GUIStyle style = new GUIStyle(GUI.skin.label);
+            style.normal.textColor = color;
+            return style;
+        }
+
+        //keeps angles in the range -180 to 180
+        public static double clampDegrees(double angle)
+        {
+            angle = angle + ((int)(2 + Math.Abs(angle) / 360)) * 360.0; //should be positive
+            angle = angle % 360.0;
+            if (angle > 180.0) return angle - 360.0;
+            else return angle;
+        }
 
         public static void debugPartStates(Part root, int level)
         {
@@ -216,7 +302,7 @@ namespace MuMech
                 debugPartStates(child, level + 2);
             }
         }
-            
+
     }
 
 }

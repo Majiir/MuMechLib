@@ -5,7 +5,7 @@ using System.Text;
 using UnityEngine;
 using MuMech;
 
-class MuMechJebAR202 : MuMechPart
+public class MuMechJebAR202 : MuMechPart
 {
 
     public MechJebCore core = null;
@@ -28,17 +28,25 @@ class MuMechJebAR202 : MuMechPart
             if (module.enabled) somethingEnabled = true;
         }
 
-        if (somethingEnabled && litLight != LightColor.GREEN)
+        if (MapView.MapIsEnabled) litLight = LightColor.NEITHER;
+        else litLight = (somethingEnabled ? LightColor.GREEN : LightColor.RED);
+
+        switch (litLight)
         {
-            turnOnLight(LightColor.GREEN);
-            turnOffLight(LightColor.RED);
-            litLight = LightColor.GREEN;
-        }
-        else if (!somethingEnabled && litLight != LightColor.RED)
-        {
-            turnOnLight(LightColor.RED);
-            turnOffLight(LightColor.GREEN);
-            litLight = LightColor.RED;
+            case LightColor.GREEN:
+                if (!greenLight.enabled) turnOnLight(LightColor.GREEN);
+                if (redLight.enabled) turnOffLight(LightColor.RED);
+                break;
+
+            case LightColor.RED:
+                if (greenLight.enabled) turnOffLight(LightColor.GREEN);
+                if (!redLight.enabled) turnOnLight(LightColor.RED);
+                break;
+
+            case LightColor.NEITHER:
+                if (greenLight.enabled) turnOffLight(LightColor.GREEN);
+                if (redLight.enabled) turnOffLight(LightColor.RED);
+                break;
         }
 
     }

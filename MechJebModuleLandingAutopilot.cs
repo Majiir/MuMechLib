@@ -5,14 +5,42 @@ using System.Text;
 using System.Diagnostics;
 using UnityEngine;
 
+/*
+ * Todo:
+ * 
+ * -fix exception when LAND touches down while Translatron window is open
+ * 
+ * -fix any bugs in LAND
+ * 
+ * Future:
+ * -investigate and fix remaining failures of kepler solver to converge for high ecc orbits (managed to hang game activating land at target after a short hop up from munar surface)
+ * -for mun landings, replace "predicted landing location" with "predicted impact site" when LAND-at-target isn't active     
+ * -save coordinates by body
+ * -fix remaining pole problems
+ * -figure out exactly where the bottom of the ship is for more controlled landings
+ * -put main simulation in a separate thread
+ * -display a target icon showing the landed target in the map view
+ * 
+ * Changed:
+ * 
+ * -can specify touchdown speed
+ * -smoother, safer landings since surface height is known well in advance
+ * -displays coordinates when you mouse over surface in map view
+ * -can click to select target location in map view
+ * -added automatic deorbit burn
+ * -solved some problems with high-ecc orbits
+ * -in orbit info panel fixed incorrect time to Pe for hyperbolic orbits with timewarp > 2x
+ * -will continue trajectories that go exoatmospheric as long as Pe < 0, to enable targeted suborbital hops
+ * 
+ */
+
 
 namespace MuMech
 {
 
 
-    class MechJebModuleLandingAutopilot : ComputerModule
+    public class MechJebModuleLandingAutopilot : ComputerModule
     {
-
 
         public MechJebModuleLandingAutopilot(MechJebCore core) : base(core) { }
 
@@ -43,7 +71,7 @@ namespace MuMech
         public override void onModuleDisabled()
         {
             turnOffSteering();
-            core.controlRelease(this);
+            if (autoLand || autoLandAtTarget) core.controlRelease(this);
         }
 
         public override void onControlLost()
@@ -56,10 +84,18 @@ namespace MuMech
             if (autoLandAtTarget)
             {
                 autoLandAtTarget = false;
+            }
+            if (autoLand)
+            {
+                autoLand = false;
+            }
+            if (core.controlModule == this)
+            {
                 core.attitudeDeactivate(this);
                 FlightInputHandler.SetNeutralControls();
+
+                if (core.trans_land) core.landDeactivate(this);
             }
-            if (core.trans_land) core.landDeactivate(this);
         }
 
         double _targetLatitude;
@@ -84,7 +120,7 @@ namespace MuMech
             }
         }
 
-        bool _dmsInput;
+        bool _dmsInput = true;
         bool dmsInput
         {
             get { return _dmsInput; }
@@ -106,19 +142,32 @@ namespace MuMech
             }
         }
 
+        private double _touchdownSpeed = 0.5;
+        String touchdownSpeedString;
+        public double touchdownSpeed
+        {
+            get { return _touchdownSpeed; }
+            set
+            {
+                if (value != _touchdownSpeed) core.settingsChanged = true;
+                _touchdownSpeed = value;
+            }
+        }
+
         public override void onLoadGlobalSettings(SettingsManager settings)
         {
             base.onLoadGlobalSettings(settings);
 
             targetLatitude = settings["RC_targetLatitude"].valueDecimal(KSC_LATITUDE);
             targetLongitude = settings["RC_targetLongitude"].valueDecimal(KSC_LONGITUDE);
-            dmsInput = settings["RC_dmsInput"].valueBool(false);
+            dmsInput = settings["RC_dmsInput"].valueBool(true);
             initializeDecimalStrings();
             initializeDMSStrings();
+            touchdownSpeed = settings["RC_touchdownSpeed"].valueDecimal(0.5);
+            touchdownSpeedString = touchdownSpeed.ToString();
 
             Vector4 savedHelpWindowPos = settings["RC_helpWindowPos"].valueVector(new Vector4(150, 50));
             helpWindowPos = new Rect(savedHelpWindowPos.x, savedHelpWindowPos.y, 10, 10);
-
         }
 
         public override void onSaveGlobalSettings(SettingsManager settings)
@@ -129,11 +178,12 @@ namespace MuMech
             settings["RC_targetLongitude"].value_decimal = targetLongitude;
             settings["RC_dmsInput"].value_bool = dmsInput;
             settings["RC_helpWindowPos"].value_vector = new Vector4(helpWindowPos.x, helpWindowPos.y);
+            settings["RC_touchdownSpeed"].value_decimal = touchdownSpeed;
         }
 
-        public enum LandStep { ON_COURSE, COURSE_CORRECTIONS, DECELERATING, KILLING_HORIZONTAL_VELOCITY, FINAL_DESCENT, LANDED };
-        String[] landerStateStrings = { "On course for target", "Executing course correction", "Decelerating", "Killing horizontal velocity", "Final descent", "Landed" };
+        public enum LandStep { DEORBIT_BURN, ON_COURSE, COURSE_CORRECTIONS, DECELERATING, KILLING_HORIZONTAL_VELOCITY, FINAL_DESCENT, LANDED };
         LandStep landStep;
+        String landStatusString = "";
 
         //simulation stuff:
         const double simulationTimeStep = 0.2; //seconds
@@ -144,7 +194,6 @@ namespace MuMech
 
         Vector3d velAUnit;
         Vector3d velBUnit;
-        //Vector3d correctedSurfaceVelocity;
         Vector3d velocityCorrection;
         bool velocityCorrectionSet = false;
 
@@ -169,15 +218,19 @@ namespace MuMech
         bool dmsNorth = true;
         bool dmsEast = true;
 
-
+        bool gettingMapTarget = false;
 
         public bool autoLandAtTarget = false;
+        bool autoLand = false;
+        bool deorbiting = false;
         bool gaveUpOnCourseCorrections = false;
         bool tooLittleThrustToLand = false;
         bool deorbitBurnFirstMessage = false;
         double decelerationEndAltitudeASL = 2500.0;
 
+        MechJebModuleOrbitOper orbitOper;
 
+        PlanetariumCamera planetariumCamera;
 
         /////////////////////////////////////////
         // GUI //////////////////////////////////
@@ -186,14 +239,87 @@ namespace MuMech
 
         public override void drawGUI(int baseWindowID)
         {
+
             GUI.skin = HighLogic.Skin;
 
             windowPos = GUILayout.Window(baseWindowID, windowPos, WindowGUI, "Landing Autopilot", GUILayout.Width(320), GUILayout.Height(100));
+
             if (showHelpWindow)
             {
                 helpWindowPos = GUILayout.Window(HELP_WINDOW_ID, helpWindowPos, HelpWindowGUI, "MechJeb Landing Autopilot Help", GUILayout.Width(400), GUILayout.Height(500));
             }
+
+            if (MapView.MapIsEnabled && gettingMapTarget)
+            {
+
+                GUI.Label(new Rect(Screen.width * 3 / 8, Screen.height / 10, Screen.width / 4, 5000),
+                          "Select the target landing site by clicking anywhere on " + part.vessel.mainBody.name + "'s surface",
+                          ARUtils.labelStyle(Color.yellow));
+
+                if (!windowPos.Contains(new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y)))
+                {
+                    double mouseLatitude;
+                    double mouseLongitude;
+                    if (getMouseCoordinates(out mouseLatitude, out mouseLongitude))
+                    {
+                        String mouseCoordString;
+                        if (dmsInput) mouseCoordString = dmsLocationString(mouseLatitude, mouseLongitude, true);
+                        else mouseCoordString = String.Format("{0:0.000}° N\n {1:0.000}° E", mouseLatitude, mouseLongitude);
+                        GUILayout.Label(mouseCoordString);
+
+                        GUI.Label(new Rect(Input.mousePosition.x + 15, Screen.height - Input.mousePosition.y, 500, 500), mouseCoordString, ARUtils.labelStyle(Color.yellow));
+                    }
+                }
+            }
+
+
         }
+
+        protected bool getMouseCoordinates(out double mouseLatitude, out double mouseLongitude)
+        {
+            Ray mouseRay = planetariumCamera.camera.ScreenPointToRay(Input.mousePosition);
+            mouseRay.origin = mouseRay.origin / Planetarium.InverseScaleFactor;
+            Vector3d relOrigin = mouseRay.origin - part.vessel.mainBody.position;
+            Vector3d relSurfacePosition;
+            if (PQS.LineSphereIntersection(relOrigin, mouseRay.direction, part.vessel.mainBody.Radius, out relSurfacePosition))
+            {
+                Vector3d surfacePoint = part.vessel.mainBody.position + relSurfacePosition;
+                mouseLatitude = part.vessel.mainBody.GetLatitude(surfacePoint);
+                mouseLongitude = ARUtils.clampDegrees(part.vessel.mainBody.GetLongitude(surfacePoint));
+                return true;
+            }
+            else
+            {
+                mouseLatitude = 0;
+                mouseLongitude = 0;
+                return false;
+            }
+        }
+
+
+
+        public override void onPartUpdate()
+        {
+            if (!enabled) return;
+
+            if (MapView.MapIsEnabled && gettingMapTarget && !windowPos.Contains(new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y)))
+            {
+                if (Input.GetMouseButtonDown(0))
+                {
+                    double mouseLatitude;
+                    double mouseLongitude;
+                    if (getMouseCoordinates(out mouseLatitude, out mouseLongitude))
+                    {
+                        targetLatitude = mouseLatitude;
+                        targetLongitude = mouseLongitude;
+                        initializeDecimalStrings();
+                        initializeDMSStrings();
+                        gettingMapTarget = false;
+                    }
+                }
+            }
+        }
+
 
 
         protected override void WindowGUI(int windowID)
@@ -225,7 +351,7 @@ namespace MuMech
                 GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
                 if (parseError) labelStyle.normal.textColor = Color.yellow;
 
-                GUILayout.Label("Target:", labelStyle);
+                GUILayout.Label("Target:", labelStyle, GUILayout.Width(40.0F));
                 targetLatitudeString = GUILayout.TextField(targetLatitudeString, GUILayout.Width(80));
                 GUILayout.Label("° N, ");
                 targetLongitudeString = GUILayout.TextField(targetLongitudeString, GUILayout.Width(80));
@@ -262,8 +388,11 @@ namespace MuMech
 
                 GUIStyle labelStyle = new GUIStyle(GUI.skin.label);
                 if (parseError) labelStyle.normal.textColor = Color.yellow;
+                GUIStyle compassToggleStyle = new GUIStyle(GUI.skin.button);
+                compassToggleStyle.padding.bottom = compassToggleStyle.padding.top = 3;
+                //                compassToggleStyle.padding.left = 3;
 
-                GUILayout.Label("Target:", labelStyle);
+                GUILayout.Label("Target:", labelStyle, GUILayout.Width(40));
                 targetLatitudeDegString = GUILayout.TextField(targetLatitudeDegString, GUILayout.Width(35));
                 GUILayout.Label("°");
                 targetLatitudeMinString = GUILayout.TextField(targetLatitudeMinString, GUILayout.Width(20));
@@ -272,11 +401,11 @@ namespace MuMech
                 GUILayout.Label("''");
                 if (dmsNorth)
                 {
-                    if (GUILayout.Button("N")) dmsNorth = false;
+                    if (GUILayout.Button("N", compassToggleStyle, GUILayout.Width(25.0F))) dmsNorth = false;
                 }
                 else
                 {
-                    if (GUILayout.Button("S")) dmsNorth = true;
+                    if (GUILayout.Button("S", compassToggleStyle, GUILayout.Width(25.0F))) dmsNorth = true;
                 }
 
                 targetLongitudeDegString = GUILayout.TextField(targetLongitudeDegString, GUILayout.Width(35));
@@ -287,15 +416,53 @@ namespace MuMech
                 GUILayout.Label("''");
                 if (dmsEast)
                 {
-                    if (GUILayout.Button("E")) dmsEast = false;
+                    if (GUILayout.Button("E", compassToggleStyle, GUILayout.Width(25.0F))) dmsEast = false;
                 }
                 else
                 {
-                    if (GUILayout.Button("W")) dmsEast = true;
+                    if (GUILayout.Button("W", compassToggleStyle, GUILayout.Width(25.0F))) dmsEast = true;
                 }
             }
 
 
+            GUILayout.EndHorizontal();
+
+
+            GUIStyle normalStyle = new GUIStyle(GUI.skin.button);
+            GUIStyle greenStyle = ARUtils.buttonStyle(Color.green);
+
+
+            GUILayout.BeginHorizontal();
+
+            if (gettingMapTarget && !MapView.MapIsEnabled) gettingMapTarget = false;
+            GUI.SetNextControlName("MapTargetToggle");
+            gettingMapTarget = GUILayout.Toggle(gettingMapTarget, "Select target on map", (gettingMapTarget ? greenStyle : normalStyle));
+            if (gettingMapTarget && !MapView.MapIsEnabled) MapView.EnterMapView();
+
+            if (part.vessel.mainBody.name.Equals("Kerbin") && GUILayout.Button("Target KSC"))
+            {
+                targetLatitude = KSC_LATITUDE;
+                targetLongitude = KSC_LONGITUDE;
+                initializeDecimalStrings();
+                initializeDMSStrings();
+            }
+
+            if (dmsInput)
+            {
+                if (GUILayout.Button("DEC"))
+                {
+                    dmsInput = false;
+                    initializeDecimalStrings();
+                }
+            }
+            else
+            {
+                if (GUILayout.Button("DMS"))
+                {
+                    dmsInput = true;
+                    initializeDMSStrings();
+                }
+            }
 
             GUILayout.EndHorizontal();
 
@@ -305,18 +472,28 @@ namespace MuMech
             switch (prediction.outcome)
             {
                 case LandingPrediction.Outcome.LANDED:
-                    if (dmsInput) GUILayout.Label("Predicted landing site: " + dmsLocationString(prediction.landingLatitude, prediction.landingLongitude));
-                    else GUILayout.Label(String.Format("Predicted landing site: {0:0.000}° N, {1:0.000}° E", prediction.landingLatitude, prediction.landingLongitude));
+                    if (part.vessel.Landed || part.vessel.Splashed
+                        || part.vessel.mainBody.maxAtmosphereAltitude > 0 || autoLandAtTarget)
+                    {
+                        String locationString;
+                        if (part.vessel.Landed) locationString = "Landed at ";
+                        else if (part.vessel.Splashed) locationString = "Splashed down at ";
+                        else locationString = "Predicted landing site: ";
 
-                    double eastError = eastErrorKm(prediction.landingLongitude, targetLongitude, targetLatitude);
-                    double northError = northErrorKm(prediction.landingLatitude, targetLatitude);
-                    GUILayout.Label(String.Format("{1:0.0} km " + (northError > 0 ? "north" : "south") +
-                        ", {0:0.0} km " + (eastError > 0 ? "east" : "west") + " of target", Math.Abs(eastError), Math.Abs(northError)));
+                        if (dmsInput) locationString += dmsLocationString(prediction.landingLatitude, prediction.landingLongitude);
+                        else locationString += String.Format("{0:0.000}° N, {1:0.000}° E", prediction.landingLatitude, prediction.landingLongitude);
 
-                    double currentLatitude = part.vessel.mainBody.GetLatitude(vesselState.CoM);
-                    double currentLongitude = part.vessel.mainBody.GetLongitude(vesselState.CoM);
-                    if (dmsInput) GUILayout.Label("Current coordinates: " + dmsLocationString(currentLatitude, currentLongitude));
-                    else GUILayout.Label(String.Format("Current coordinates: {0:0.000}° N, {1:0.000}° E", currentLatitude, clampDegrees(currentLongitude)));
+                        GUILayout.Label(locationString);
+
+                        double eastError = eastErrorKm(prediction.landingLongitude, targetLongitude, targetLatitude);
+                        double northError = northErrorKm(prediction.landingLatitude, targetLatitude);
+                        GUILayout.Label(String.Format("{1:0.0} km " + (northError > 0 ? "north" : "south") +
+                            ", {0:0.0} km " + (eastError > 0 ? "east" : "west") + " of target", Math.Abs(eastError), Math.Abs(northError)));
+                    }
+                    //double currentLatitude = part.vessel.mainBody.GetLatitude(vesselState.CoM);
+                    //double currentLongitude = part.vessel.mainBody.GetLongitude(vesselState.CoM);
+                    //if (dmsInput) GUILayout.Label("Current coordinates: " + dmsLocationString(currentLatitude, currentLongitude));
+                    //else GUILayout.Label(String.Format("Current coordinates: {0:0.000}° N, {1:0.000}° E", currentLatitude, ARUtils.clampDegrees(currentLongitude)));
                     break;
 
                 case LandingPrediction.Outcome.AEROBRAKED:
@@ -349,48 +526,35 @@ namespace MuMech
 
             GUILayout.BeginHorizontal();
 
-            GUIStyle normalStyle = new GUIStyle(GUI.skin.button);
-            GUIStyle greenStyle = new GUIStyle(GUI.skin.button);
-            greenStyle.onNormal.textColor = greenStyle.onFocused.textColor = greenStyle.onHover.textColor = greenStyle.onActive.textColor = Color.green;
 
-            bool oldAutoLand = core.trans_land && !autoLandAtTarget;
-            //print("core.trans_land = " + core.trans_land);
-            //print("oldAutoLand = " + oldAutoLand);
-            bool newAutoLand = GUILayout.Toggle(oldAutoLand, "LAND", (oldAutoLand ? greenStyle : normalStyle));
-            //print("newAutoLand = " + newAutoLand);
-            if (newAutoLand && !oldAutoLand)
+            bool newAutoLand = GUILayout.Toggle(autoLand, "LAND", (autoLand ? greenStyle : normalStyle));
+            if (newAutoLand && !autoLand)
             {
                 autoLandAtTarget = false;
                 core.controlClaim(this);
-                core.landActivate(this);
-                //print("called core.landActivate");
+                core.landActivate(this, touchdownSpeed);
                 FlightInputHandler.SetNeutralControls();
             }
-            else if (!newAutoLand && oldAutoLand)
+            else if (!newAutoLand && autoLand)
             {
                 core.landDeactivate(this);
-                //print("called core.landDeactivate");
+                core.controlRelease(this);
             }
-
+            autoLand = newAutoLand;
 
             bool newAutoLandAtTarget = GUILayout.Toggle(autoLandAtTarget, "LAND at target", (autoLandAtTarget ? greenStyle : normalStyle));
 
             if (newAutoLandAtTarget && !autoLandAtTarget)
             {
-                if (prediction.outcome != LandingPrediction.Outcome.LANDED)
-                {
-                    deorbitBurnFirstMessage = true;
-                    newAutoLandAtTarget = false;
-                }
-                else
-                {
-                    deorbitBurnFirstMessage = false;
-                    gaveUpOnCourseCorrections = false;
-                    core.controlClaim(this);
-                    core.landDeactivate(this);
-                    landStep = LandStep.COURSE_CORRECTIONS;
-                    FlightInputHandler.SetNeutralControls();
-                }
+                deorbitBurnFirstMessage = false;
+                gaveUpOnCourseCorrections = false;
+                core.controlClaim(this);
+                core.landDeactivate(this);
+
+                if (part.vessel.orbit.PeA > -0.1 * part.vessel.mainBody.Radius) landStep = LandStep.DEORBIT_BURN;
+                else landStep = LandStep.COURSE_CORRECTIONS;
+
+                FlightInputHandler.SetNeutralControls();
             }
             else if (!newAutoLandAtTarget && autoLandAtTarget)
             {
@@ -400,48 +564,29 @@ namespace MuMech
             autoLandAtTarget = newAutoLandAtTarget;
 
 
-            if (part.vessel.mainBody.name.Equals("Kerbin") && GUILayout.Button("Target KSC"))
-            {
-                targetLatitude = KSC_LATITUDE;
-                targetLongitude = KSC_LONGITUDE;
-                initializeDecimalStrings();
-                initializeDMSStrings();
-            }
-
-            if (dmsInput)
-            {
-                if (GUILayout.Button("DEC"))
-                {
-                    dmsInput = false;
-                    initializeDecimalStrings();
-                }
-            }
-            else
-            {
-                if (GUILayout.Button("DMS"))
-                {
-                    dmsInput = true;
-                    initializeDMSStrings();
-                }
-            }
-
             showHelpWindow = GUILayout.Toggle(showHelpWindow, "?", new GUIStyle(GUI.skin.button));
-
-
 
             GUILayout.EndHorizontal();
 
+
             if (autoLandAtTarget)
             {
-                String stateString = "Landing step: " + landerStateStrings[(int)landStep];
-                GUILayout.Label(stateString);
+                GUILayout.Label("Landing step: " + landStatusString);
             }
 
-            GUIStyle yellow = new GUIStyle(GUI.skin.label);
-            yellow.normal.textColor = Color.yellow;
+            GUIStyle yellow = ARUtils.labelStyle(Color.yellow);
             if (gaveUpOnCourseCorrections) GUILayout.Label("Attempted course corrections made the trajectory no longer land. Try a bigger deorbit burn. Or is the target on the wrong side of " + part.vessel.mainBody.name + "?", yellow);
             if (tooLittleThrustToLand) GUILayout.Label("Warning: Too little thrust to land.", yellow);
             if (deorbitBurnFirstMessage) GUILayout.Label("You must do a deorbit burn before activating \"LAND at target\"", yellow);
+
+
+            GUILayout.BeginHorizontal();
+
+            touchdownSpeed = ARUtils.doGUITextInput("Touchdown speed:", 200.0F, touchdownSpeedString, 50.0F, "m/s", 50.0F, out touchdownSpeedString, touchdownSpeed);
+            core.trans_land_touchdown_speed = touchdownSpeed;
+
+            GUILayout.EndHorizontal();
+
 
             GUILayout.EndVertical();
 
@@ -454,15 +599,26 @@ namespace MuMech
         {
             scrollPosition = GUILayout.BeginScrollView(scrollPosition);
             GUILayout.Label("MechJeb's landing autopilot can automatically fly you down to a landing on Kerbin or the Mun. Optionally, you may specify the coordinates to land at. The landing autopilot can also be used to predict the outcome of aerobraking maneuvers.\n\n" +
-"While in orbit, the landing autopilot will display your current periapsis. The landing autopilot will not predict your landing location until you are on a trajectory that intersects Kerbin's atmosphere or the Mun's surface. Once you are on a landing trajectory, the landing autopilot will display the predicted landing site.\n\n" +
-"Note that if you are on a trajectory through Kerbin's atmosphere that does not land but instead exits the atmosphere again, the landing autopilot will display the orbit you will have after exiting the atmosphere. This can be used to accurately judge aerobraking maneuvers. If you want to land instead of aerobrake, then you need to burn retrograde until the landing autopilot starts to show a predicted landing site.\n\n" +
-"In the text fields, you can enter a target landing site. When you are on a landing trajectory, the landing autopilot will display your predicted landing site, calculated by a simulation of the descent. It will also display how far from the current target this landing site is. The landing autopilot will also display your current coordinates.\n\n" +
-"The \"Auto-land\" and \"Auto-land at target\" buttons let the landing autopilot take control of the ship to do a powered landing. \"Auto-land\" will disregard the target coordinates and put the ship down wherever it is currently falling toward, much like the Translatron LAND feature. \"Auto-land at target\" will land the ship at the target coordinates you have entered in the text fields. \n\n" +
-"Using \"Auto-land at target\":\n\n" +
-"\"Auto-land at target\" is best activated immediately after your deorbit burn. You don't have to make a very precise deorbit burn: the autopilot will automatically correct the trajectory to point toward the desired landing site. However, you do need to make sure that you do your deorbit burn on the correct side of the planet or Mun. A decent rule of thumb is to do your deorbit burn when your target is 90 degrees ahead of you along your orbit. Once the landing autopilot has corrected the trajectory, it will display \"On course for target.\" At this point it's safe to activate time warp if you want to speed up the landing.\n\n" +
-"The landing autopilot will automatically deactivate time warp as it prepares to make the deceleration burn. During Mun landings, the autopilot will continue to make subtle corrections to the landing trajectory during the deceleration burn to aim more precisely at your target.\n\n" +
-"For Mun landings, the deceleration burn ends directly above the target at an altitude of 2500m. The autopilot will kill all horizontal speed and descend vertically to the target. For Kerbin landings, the deceleration burn occurs in the last 2000m of the descent.\n\n" +
-"Note that if you enable RCS during the final vertical descent, the autopilot will automatically use it to kill horizontal velocity and help land vertically.");
+"----------Untargeted Landings----------\n\n" +
+"If you want to do a powered landing, and don't want MechJeb to aim for a specific target, hit LAND. You can activate LAND at any point in your descent. If you are still in orbit, MechJeb will do a deorbit burn. LAND will manage your speed to fly you down to a soft landing. It will try to touch down at the vertical speed specified in the \"Touchdown speed\" field.\n\n" +
+"----------Targeted Landings----------\n\n" +
+"MechJeb can also land a specified target coodinates. Coordinates  can be specified in two formats, decimal (DEC) and degrees-minutes-seconds (DMS), and you can switch to one or the other by pressing DEC or DMS.\n\n" +
+"First you need to set a target. There are several ways of doing this:\n\n" +
+"Entering coordinates by hand - You can type coordinates into the target coordinate text fields. For instance, if you want to land next to another vessel that has already landed, you can mouse over the ship in map view and the game will display its coordinates in DMS format. You can then enter these coordinates as your target coordinates, making sure you are in DMS mode.\n\n" +
+"Point-and-click - Hit \"Select target on map\" and you'll be taken to the map view. Now you can click any point on the surface of the body you are orbiting. The point you click will become the target landing site. MechJeb will display coordinates as you mouse over the surface, and will automatically paste these into the target coordinate text fields when you click on your desired landing site.\n\n" +
+"Target KSC - Hit \"Target KSC\" and MechJeb will automatically paste the coordinates of KSC on Kerbin into the target coordinate text fields.\n\n" +
+"Once you have set your landing target, hit \"LAND at target\" and MechJeb will initiate a completely automatic targeted descent to land at the target. The descent proceeds in several stages:\n\n" +
+"Deorbit burn - If you are still in orbit, MechJeb will first warp to the appropriate point in the orbit and perform a deorbit burn.\n\n" +
+"Course correction - MechJeb will do a correction burn culminating in fine adjustments to the trajectory so that it's aimed precisely at the target.\n\n" +
+"On course for target - Once the trajectory is good enough, MechJeb will display the status \"On course for target (safe to warp)\". As indicated, it's now safe to increase time warp as much as you like to speed the descent. MechJeb will automatically unwarp when necessary. In addition, if you are going to stage during the descent it's best to stage now, rather than during deceleration burn, as staging during the deceleration burn will throw off MechJeb's predictions and cause you to over- or under-shoot the target.\n\n" +
+"Deceleration - For Munar landings the next step is a deceleration burn. MechJeb will continue to make small corrections to the trajectory during this burn. MechJeb aims for the deceleration burn to end 200m vertically above the target. At the end of the burn, the ship will briefly come to a halt before dropping down on the target. For Kerbin landings, MechJeb simply allows the atmosphere to slow down the craft during this stage.\n\n" +
+"Final descent - This is the final vertical powered descent, culminating in touchdown. MechJeb will try to touch down with the vertical speed specified in the \"Touchdown speed\" input.\n\n" +
+"----------Manual Targeted Landings on Kerbin----------\n\n" +
+"You can use the landing autopilot's landing prediction to do a targeted landing on Kerbin manual instead of under autopilot control. When you are on a landing trajectory, MechJeb will display your predicted landing site, taking into account atmospheric drag. It will also display how far that predicted landing site is from your target. By doing manual burns to bring the predicted landing site to the target landing site you can make sure you land at your target.\n\n" +
+"MechJeb will not display a predicted landing site on the Mun unless the \"LAND at target\" autopilot mode is active, so it won't help you do manual targeted landings on the Mun. This is because your landing site is highly dependent on the exact details of your deceleration burn, and MechJeb cannot predict how you will perform the deceleration burn.\n\n" +
+"----------Aerobraking predictions----------\n\n" +
+"If you are on an aerobraking trajectory--one that passes through the atmosphere but does not land--the landing autopilot will show a prediction of what your orbit (apoapsis and periapsis) will be after you exit the atmosphere. This lets you perform accurate aerobraking maneuvers."
+);
             GUILayout.EndScrollView();
             GUI.DragWindow();
         }
@@ -489,7 +645,7 @@ namespace MuMech
             targetLatitudeSecString = targetLatitudeSec.ToString();
             dmsNorth = (targetLatitude > 0);
 
-            targetLongitude = clampDegrees(targetLongitude);
+            targetLongitude = ARUtils.clampDegrees(targetLongitude);
             int targetLongitudeDeg = (int)Math.Floor(Math.Abs(targetLongitude));
             int targetLongitudeMin = (int)Math.Floor(60 * (Math.Abs(targetLongitude) - targetLongitudeDeg));
             int targetLongitudeSec = (int)Math.Floor(3600 * (Math.Abs(targetLongitude) - targetLongitudeDeg - targetLongitudeMin / 60.0));
@@ -500,9 +656,10 @@ namespace MuMech
 
         }
 
-        String dmsLocationString(double lat, double lon)
+        String dmsLocationString(double lat, double lon, bool newline = false)
         {
-            return dmsAngleString(lat) + (lat > 0 ? " N, " : " S, ") + dmsAngleString(clampDegrees(lon)) + (clampDegrees(lon) > 0 ? " E" : " W");
+            return dmsAngleString(lat) + (lat > 0 ? " N" : " S") + (newline ? "\n" : ", ")
+                 + dmsAngleString(ARUtils.clampDegrees(lon)) + (ARUtils.clampDegrees(lon) > 0 ? " E" : " W");
         }
 
         String dmsAngleString(double angle)
@@ -522,18 +679,11 @@ namespace MuMech
 
         double eastErrorKm(double predLongitude, double targLongitude, double targLatitude)
         {
-            double degreeError = clampDegrees(predLongitude - targLongitude);
+            double degreeError = ARUtils.clampDegrees(predLongitude - targLongitude);
             return degreeError * Math.PI / 180 * part.vessel.mainBody.Radius * Math.Cos(targLatitude * Math.PI / 180) / 1000.0;
         }
 
-        //keeps angles in the range -180 to 180
-        double clampDegrees(double angle)
-        {
-            angle = angle + ((int)(2 + Math.Abs(angle) / 360)) * 360.0; //should be positive
-            angle = angle % 360.0;
-            if (angle > 180.0) return angle - 360.0;
-            else return angle;
-        }
+
 
 
         ///////////////////////////////////////
@@ -548,6 +698,10 @@ namespace MuMech
 
             switch (landStep)
             {
+                case LandStep.DEORBIT_BURN:
+                    driveDeorbitBurn(s);
+                    break;
+
                 case LandStep.ON_COURSE:
                     driveOnCourse(s);
                     break;
@@ -570,8 +724,83 @@ namespace MuMech
             }
         }
 
+        void driveDeorbitBurn(FlightCtrlState s)
+        {
+            //compute the desired velocity after deorbiting. we aim for a trajectory that 
+            // a) has the same vertical speed as our current trajectory
+            // b) has a horizontal speed that will give it a periapsis of -10% of the body's radius
+            // c) has a heading that points toward where the target will be at the end of free-fall, accounting for planetary rotation
+            double horizontalDV = orbitOper.deltaVToChangePeriapsis(-0.1 * part.vessel.mainBody.Radius);
+            horizontalDV *= Math.Sign(-0.1 * part.vessel.mainBody.Radius - part.vessel.orbit.PeA);
+            Vector3d currentHorizontal = Vector3d.Exclude(vesselState.up, vesselState.velocityVesselOrbit).normalized;
+            Vector3d forwardDeorbitVelocity = vesselState.velocityVesselOrbit + horizontalDV * currentHorizontal;
+            AROrbit forwardDeorbitTrajectory = new AROrbit(vesselState.CoM, forwardDeorbitVelocity, vesselState.time, part.vessel.mainBody);
+            double freefallTime = projectFreefallEndTime(forwardDeorbitTrajectory, vesselState.time) - vesselState.time;
+            double planetRotationDuringFreefall = 360 * freefallTime / part.vessel.mainBody.rotationPeriod;
+            Vector3d currentTargetRadialVector = part.vessel.mainBody.GetRelSurfacePosition(targetLatitude, targetLongitude, 0);
+            Quaternion freefallPlanetRotation = Quaternion.AngleAxis((float)planetRotationDuringFreefall, part.vessel.mainBody.angularVelocity);
+            Vector3d freefallEndTargetRadialVector = freefallPlanetRotation * currentTargetRadialVector;
+            Vector3d currentTargetPosition = part.vessel.mainBody.position + part.vessel.mainBody.Radius * part.vessel.mainBody.GetSurfaceNVector(targetLatitude, targetLongitude);
+            Vector3d freefallEndTargetPosition = part.vessel.mainBody.position + freefallEndTargetRadialVector;
+            Vector3d freefallEndHorizontalToTarget = Vector3d.Exclude(vesselState.up, freefallEndTargetPosition - vesselState.CoM).normalized;
+            double currentHorizontalSpeed = Vector3d.Exclude(vesselState.up, vesselState.velocityVesselOrbit).magnitude;
+            double finalHorizontalSpeed = currentHorizontalSpeed + horizontalDV;
+            double currentVerticalSpeed = Vector3d.Dot(vesselState.up, vesselState.velocityVesselOrbit);
+
+            Vector3d currentRadialVector = vesselState.CoM - part.vessel.mainBody.position;
+            Vector3d currentOrbitNormal = Vector3d.Cross(currentRadialVector, vesselState.velocityVesselOrbit);
+            double targetAngleToOrbitNormal = Math.Abs(Vector3d.Angle(currentOrbitNormal, freefallEndTargetRadialVector));
+            targetAngleToOrbitNormal = Math.Min(targetAngleToOrbitNormal, 180 - targetAngleToOrbitNormal);
+
+            double targetAheadAngle = Math.Abs(Vector3d.Angle(currentRadialVector, freefallEndTargetRadialVector));
+
+            double planeChangeAngle = Math.Abs(Vector3d.Angle(currentHorizontal, freefallEndHorizontalToTarget));
+
+            if (!deorbiting)
+            {
+                if (targetAngleToOrbitNormal < 10
+                   || (targetAheadAngle < 90 && targetAheadAngle > 60 && planeChangeAngle < 90)) deorbiting = true;
+            }
+
+            if (deorbiting)
+            {
+                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+
+                Vector3d desiredVelocity = finalHorizontalSpeed * freefallEndHorizontalToTarget + currentVerticalSpeed * vesselState.up;
+                Vector3d velocityChange = desiredVelocity - vesselState.velocityVesselOrbit;
+
+                if (velocityChange.magnitude < 2.0) landStep = LandStep.COURSE_CORRECTIONS;
+
+                core.attitudeTo(velocityChange.normalized, MechJebCore.AttitudeReference.INERTIAL, this);
+
+                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = 1.0F;
+                else s.mainThrottle = 0.0F;
+
+                landStatusString = "Executing deorbit burn";
+            }
+            else
+            {
+                //if we don't want to deorbit but we're already on a reentry trajectory, we can't wait until the ideal point 
+                //in the orbit to deorbt; we already have deorbited.
+                if (part.vessel.orbit.ApA < part.vessel.mainBody.maxAtmosphereAltitude)
+                {
+                    landStep = LandStep.COURSE_CORRECTIONS;
+                }
+                else
+                {
+                    s.mainThrottle = 0.0F;
+                    core.attitudeTo(Vector3d.back, MechJebCore.AttitudeReference.ORBIT, this);
+                    core.warpIncrease(this);
+                }
+
+                landStatusString = "Moving to deorbit burn point";
+            }
+        }
+
         void driveCourseCorrections(FlightCtrlState s)
         {
+            landStatusString = "Executing course correction";
+
             //if we are too low to make course corrections, start the deceleration burn
             if (!courseCorrectionsAllowed())
             {
@@ -634,6 +863,8 @@ namespace MuMech
 
         void driveOnCourse(FlightCtrlState s)
         {
+            landStatusString = "On course for target (safe to warp)";
+
             s.mainThrottle = 0.0F;
             core.attitudeTo(Vector3d.back, MechJebCore.AttitudeReference.SURFACE_VELOCITY, this);
 
@@ -648,6 +879,8 @@ namespace MuMech
 
         void driveKillHorizontalVelocity(FlightCtrlState s)
         {
+            landStatusString = "Killing horizontal velocity";
+
             if (Vector3d.Dot(Vector3d.Exclude(vesselState.up, vesselState.forward), vesselState.velocityVesselSurface) > 0)
             {
                 s.mainThrottle = 0;
@@ -660,7 +893,7 @@ namespace MuMech
             double desiredSpeed = 0; //hover until horizontal velocity is killed
             double controlledSpeed = Vector3d.Dot(vesselState.velocityVesselSurface, vesselState.up);
             double speedError = desiredSpeed - controlledSpeed;
-            double speedCorrectionTimeConstant = 0.3;
+            double speedCorrectionTimeConstant = 1.0;
             double desiredAccel = speedError / speedCorrectionTimeConstant;
             double minAccel = -vesselState.localg;
             double maxAccel = -vesselState.localg + Vector3d.Dot(vesselState.forward, vesselState.up) * vesselState.maxThrustAccel;
@@ -680,8 +913,10 @@ namespace MuMech
 
         void driveFinalDescent(FlightCtrlState s)
         {
+            landStatusString = "Final descent";
+
             //hand off to core's landing mode
-            if (part.Landed || part.Splashed)
+            if (part.vessel.Landed || part.vessel.Splashed)
             {
                 turnOffSteering();
                 core.controlRelease(this);
@@ -692,7 +927,7 @@ namespace MuMech
 
             if (!core.trans_land)
             {
-                core.landActivate(this);
+                core.landActivate(this, touchdownSpeed);
             }
         }
 
@@ -701,18 +936,22 @@ namespace MuMech
             //we aren't right next to the ground but our speed is near or above the nominal deceleration speed
             //for the current altitude
 
-            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) TimeWarp.SetRate(1);
+            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpPhysics(this);
 
             //for atmosphere landings, let the air decelerate us
             if (part.vessel.mainBody.maxAtmosphereAltitude > 0)
             {
+                landStatusString = "Decelerating";
+
                 s.mainThrottle = 0;
                 core.attitudeTo(Vector3.back, MechJebCore.AttitudeReference.SURFACE_VELOCITY, this);
 
                 //skip deceleration burn and kill-horizontal-velocity for kerbin landings
-                if (vesselState.altitudeTrue < 2000) landStep = LandStep.FINAL_DESCENT;
+                if (vesselState.altitudeASL < decelerationEndAltitudeASL) landStep = LandStep.FINAL_DESCENT;
                 return;
             }
+
+            //vacuum landings:
 
             if (vesselState.altitudeASL < decelerationEndAltitudeASL)
             {
@@ -721,6 +960,7 @@ namespace MuMech
                 core.attitudeTo(Vector3.up, MechJebCore.AttitudeReference.SURFACE_NORTH, this);
                 return;
             }
+
 
             Vector3d desiredThrustVector;
             if (Vector3d.Dot(vesselState.velocityVesselSurfaceUnit, vesselState.up) > 0.5)
@@ -778,6 +1018,9 @@ namespace MuMech
                 Vector3d velocityNormalThrustAccel = Vector3d.Exclude(vesselState.velocityVesselSurface, vesselState.thrustAccel(s.mainThrottle) * vesselState.forward);
                 velocityCorrection -= vesselState.deltaT * velocityNormalThrustAccel;
             }
+
+            if (s.mainThrottle == 0.0F) landStatusString = "Preparing for braking burn";
+            else landStatusString = "Executing braking burn";
         }
 
         bool courseCorrectionsAllowed()
@@ -806,11 +1049,26 @@ namespace MuMech
         //////////////////////////////
 
 
+        public override void onFlightStart()
+        {
+            foreach (ComputerModule module in core.modules)
+            {
+                if (module is MechJebModuleOrbitOper) orbitOper = (MechJebModuleOrbitOper)module;
+            }
+
+            planetariumCamera = (PlanetariumCamera)GameObject.FindObjectOfType(typeof(PlanetariumCamera));
+        }
+
 
         public override void onPartFixedUpdate()
         {
-
             if (!enabled) return;
+
+            if (autoLand && !core.trans_land) //detect when core land turns itself off.
+            {
+                autoLand = false;
+                core.controlRelease(this);
+            }
 
             decelerationEndAltitudeASL = chooseDecelerationEndAltitudeASL();
 
@@ -869,12 +1127,27 @@ namespace MuMech
         {
             if (part.vessel.mainBody.maxAtmosphereAltitude > 0)
             {
-                double groundAltitude = vesselState.altitudeASL - Math.Min(vesselState.altitudeTrue, vesselState.altitudeASL);
-                return groundAltitude + 500;
+                if (prediction != null && prediction.outcome == LandingPrediction.Outcome.LANDED)
+                {
+                    return 2000 + ARUtils.PQSSurfaceHeight(prediction.landingLatitude, prediction.landingLongitude, part.vessel.mainBody);
+                }
+                else
+                {
+                    return 2000 + ARUtils.PQSSurfaceHeight(targetLatitude, targetLongitude, part.vessel.mainBody);
+                }
             }
             else
             {
-                return 5000.0;
+                if (prediction != null && prediction.outcome == LandingPrediction.Outcome.LANDED)
+                {
+                    return 100 + ARUtils.PQSSurfaceHeight(prediction.landingLatitude, prediction.landingLongitude, part.vessel.mainBody);
+                }
+                else
+                {
+                    return 100 + ARUtils.PQSSurfaceHeight(targetLatitude, targetLongitude, part.vessel.mainBody);
+                }
+
+
             }
         }
 
@@ -1061,28 +1334,29 @@ namespace MuMech
             return new Vector2d(rotUnit2.x, rotUnit2.z);
         }
 
-
+        protected LandingPrediction simulateReentryRK4(double dt, Vector3d velOffset)
+        {
+            return simulateReentryRK4(vesselState.CoM, vesselState.velocityVesselOrbit + velOffset, vesselState.time, dt, true);
+        }
 
 
         //predict the reentry trajectory. uses the fourth order Runge-Kutta numerical integration scheme
-        protected LandingPrediction simulateReentryRK4(double dt, Vector3d velOffset)
+        protected LandingPrediction simulateReentryRK4(Vector3d startPos, Vector3d startVel, double startTime, double dt, bool recurse)
         {
             LandingPrediction result = new LandingPrediction();
 
             //should change this to also account for hyperbolic orbits where we have passed periapsis
+            //should also change this to use the orbit giv en by the parameters
             if (part.vessel.orbit.PeA > part.vessel.mainBody.maxAtmosphereAltitude)
             {
                 result.outcome = LandingPrediction.Outcome.NO_REENTRY;
                 return result;
             }
 
-            //double groundAltitude = vesselState.altitudeASL - measureAltitudeAboveSurface(vesselState.CoM, part.vessel.mainBody);
-
             //use the known orbit in vacuum to find the position and velocity when we first hit the atmosphere 
             //or start decelerating with thrust:
-            AROrbit freefallTrajectory = new AROrbit(vesselState.CoM, vesselState.velocityVesselOrbit + velOffset, vesselState.time, part.vessel.mainBody);
-            double initialT = projectFreefallEndTime(freefallTrajectory);
-
+            AROrbit freefallTrajectory = new AROrbit(startPos, startVel, startTime, part.vessel.mainBody);
+            double initialT = projectFreefallEndTime(freefallTrajectory, startTime);
             //a hack to detect improperly initialized stuff and not try to do the simulation
             if (double.IsNaN(initialT))
             {
@@ -1153,7 +1427,7 @@ namespace MuMech
                     result.landingLatitude = part.vessel.mainBody.GetLatitude(pos);
                     result.landingLongitude = part.vessel.mainBody.GetLongitude(pos);
                     result.landingLongitude -= (t - vesselState.time) * (360.0 / (part.vessel.mainBody.rotationPeriod)); //correct for planet rotation (360 degrees every 6 hours)
-                    result.landingLongitude = clampDegrees(result.landingLongitude);
+                    result.landingLongitude = ARUtils.clampDegrees(result.landingLongitude);
                     result.landingTime = t;
                     return result;
                 }
@@ -1164,10 +1438,18 @@ namespace MuMech
                     && altitudeASL > part.vessel.mainBody.maxAtmosphereAltitude + 1000
                     && Vector3d.Dot(vel, pos - part.vessel.mainBody.position) > 0)
                 {
-                    result.outcome = LandingPrediction.Outcome.AEROBRAKED;
-                    result.aerobrakeApoapsis = ARUtils.computeApoapsis(pos, vel, part.vessel.mainBody);
-                    result.aerobrakePeriapsis = ARUtils.computePeriapsis(pos, vel, part.vessel.mainBody);
-                    return result;
+                    if (part.vessel.orbit.PeA > 0 || !recurse)
+                    {
+                        result.outcome = LandingPrediction.Outcome.AEROBRAKED;
+                        result.aerobrakeApoapsis = ARUtils.computeApoapsis(pos, vel, part.vessel.mainBody);
+                        result.aerobrakePeriapsis = ARUtils.computePeriapsis(pos, vel, part.vessel.mainBody);
+                        return result;
+                    }
+                    else
+                    {
+                        //continue suborbital trajectories to a landing
+                        return simulateReentryRK4(pos, vel, t, dt, false);
+                    }
                 }
 
                 //Don't tie up the CPU by running forever. Some real reentry trajectories will time out, but that's
@@ -1196,9 +1478,9 @@ namespace MuMech
         //In a landing, we are going to free fall some way and then either hit atmosphere or start
         //decelerating with thrust. Until that happens we can project the orbit forward along a conic section.
         //Given an orbit, this function figures out the time at which the free-fall phase will end
-        double projectFreefallEndTime(AROrbit offsetOrbit)
+        double projectFreefallEndTime(AROrbit offsetOrbit, double startTime)
         {
-            Vector3d currentPosition = offsetOrbit.positionAtTime(vesselState.time);
+            Vector3d currentPosition = offsetOrbit.positionAtTime(startTime);
             double currentAltitude = FlightGlobals.getAltitudeAtPos(currentPosition);
 
             //check if we are already in the atmosphere or below the deceleration burn end altitude
@@ -1207,7 +1489,7 @@ namespace MuMech
                 return vesselState.time;
             }
 
-            Vector3d currentOrbitVelocity = offsetOrbit.velocityAtTime(vesselState.time);
+            Vector3d currentOrbitVelocity = offsetOrbit.velocityAtTime(startTime);
             Vector3d currentSurfaceVelocity = currentOrbitVelocity - part.vessel.mainBody.getRFrmVel(currentPosition);
 
             //check if we already should be decelerating or will be momentarily:
@@ -1219,16 +1501,16 @@ namespace MuMech
             }
 
             //check if the orbit reenters at all
-            double timeToPe = offsetOrbit.timeToPeriapsis(vesselState.time);
-            Vector3d periapsisPosition = offsetOrbit.positionAtTime(vesselState.time + timeToPe);
+            double timeToPe = offsetOrbit.timeToPeriapsis(startTime);
+            Vector3d periapsisPosition = offsetOrbit.positionAtTime(startTime + timeToPe);
             if (FlightGlobals.getAltitudeAtPos(periapsisPosition) > part.vessel.mainBody.maxAtmosphereAltitude)
             {
-                return vesselState.time + timeToPe; //return the time of periapsis as a next best number
+                return startTime + timeToPe; //return the time of periapsis as a next best number
             }
 
             //determine time & velocity of reentry
-            double minReentryTime = vesselState.time;
-            double maxReentryTime = vesselState.time + timeToPe;
+            double minReentryTime = startTime;
+            double maxReentryTime = startTime + timeToPe;
             while (maxReentryTime - minReentryTime > 1.0)
             {
                 double test = (maxReentryTime + minReentryTime) / 2.0;
@@ -1256,7 +1538,7 @@ namespace MuMech
 
     }
 
-    class LandingPrediction
+    public class LandingPrediction
     {
         public enum Outcome { LANDED, AEROBRAKED, TIMED_OUT, NO_REENTRY }
         public Outcome outcome;
@@ -1269,7 +1551,7 @@ namespace MuMech
     }
 
 
-    class Matrix2x2
+    public class Matrix2x2
     {
         double a, b, c, d;
 

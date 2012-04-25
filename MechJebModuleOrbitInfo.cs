@@ -4,19 +4,24 @@ using System.Linq;
 using System.Text;
 using UnityEngine;
 
-namespace MuMech {
-    class MechJebModuleOrbitInfo : ComputerModule {
-        public MechJebModuleOrbitInfo(MechJebCore core) : base(core) {}
+namespace MuMech
+{
+    public class MechJebModuleOrbitInfo : ComputerModule
+    {
+        public MechJebModuleOrbitInfo(MechJebCore core) : base(core) { }
 
-        public override string getName() {
+        public override string getName()
+        {
             return "Orbital Information";
         }
 
-        public override GUILayoutOption[] windowOptions() {
+        public override GUILayoutOption[] windowOptions()
+        {
             return new GUILayoutOption[] { GUILayout.Width(200) };
         }
 
-        protected override void WindowGUI(int windowID) {
+        protected override void WindowGUI(int windowID)
+        {
             GUIStyle txtR = new GUIStyle(GUI.skin.label);
             txtR.alignment = TextAnchor.UpperRight;
 

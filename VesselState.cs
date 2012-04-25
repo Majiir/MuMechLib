@@ -4,8 +4,10 @@ using System.Text;
 using UnityEngine;
 using MuMech;
 
-namespace MuMech {
-    class VesselState {
+namespace MuMech
+{
+    public class VesselState
+    {
         public double time;            //planetarium time
         public double deltaT;          //TimeWarp.fixedDeltaTime
 
@@ -45,6 +47,7 @@ namespace MuMech {
         public MovingAverage vesselRoll = new MovingAverage();
         public MovingAverage altitudeASL = new MovingAverage();
         public MovingAverage altitudeTrue = new MovingAverage();
+        public double altitudeBottom = 0;
         public MovingAverage orbitApA = new MovingAverage();
         public MovingAverage orbitPeA = new MovingAverage();
         public MovingAverage orbitPeriod = new MovingAverage();
@@ -71,7 +74,8 @@ namespace MuMech {
         public double massDrag;
         public double atmosphericDensity;
 
-        public void Update(Vessel vessel) {
+        public void Update(Vessel vessel)
+        {
             time = Planetarium.GetUniversalTime();
             deltaT = TimeWarp.fixedDeltaTime;
 
@@ -86,7 +90,7 @@ namespace MuMech {
 
             velocityVesselOrbit = vessel.orbit.GetVel();
             velocityVesselOrbitUnit = velocityVesselOrbit.normalized;
-            velocityVesselSurface = velocityVesselOrbit  - vessel.mainBody.getRFrmVel(CoM);
+            velocityVesselSurface = velocityVesselOrbit - vessel.mainBody.getRFrmVel(CoM);
             velocityVesselSurfaceUnit = velocityVesselSurface.normalized;
             velocityMainBodySurface = rotationSurface * velocityVesselSurface;
 
@@ -95,7 +99,7 @@ namespace MuMech {
             upNormalToVelSurface = Vector3d.Exclude(velocityVesselSurfaceUnit, up).normalized;
             upNormalToVelOrbit = Vector3d.Exclude(velocityVesselOrbit, up).normalized;
             leftSurface = -Vector3d.Cross(upNormalToVelSurface, velocityVesselSurfaceUnit);
-            leftOrbit = -Vector3d.Cross(upNormalToVelOrbit, velocityVesselOrbitUnit); ; 
+            leftOrbit = -Vector3d.Cross(upNormalToVelOrbit, velocityVesselOrbitUnit); ;
 
             gravityForce = FlightGlobals.getGeeForceAtPosition(CoM);
             localg = gravityForce.magnitude;
@@ -111,10 +115,26 @@ namespace MuMech {
 
             altitudeASL.value = vessel.mainBody.GetAltitude(CoM);
             RaycastHit sfc;
-            if (Physics.Raycast(CoM, -up, out sfc, (float)altitudeASL + 10000.0F, 1 << 15)) {
+            if (Physics.Raycast(CoM, -up, out sfc, (float)altitudeASL + 10000.0F, 1 << 15))
+            {
                 altitudeTrue.value = sfc.distance;
-            } else {
-                altitudeTrue.value = vessel.mainBody.GetAltitude(CoM);
+            }
+            else
+            {
+                // from here: http://kerbalspaceprogram.com/forum/index.php?topic=10324.msg161923#msg161923
+                altitudeTrue.value = vessel.mainBody.GetAltitude(CoM) - (vessel.mainBody.pqsController.GetSurfaceHeight(QuaternionD.AngleAxis(vessel.mainBody.GetLongitude(CoM), Vector3d.down) * QuaternionD.AngleAxis(vessel.mainBody.GetLatitude(CoM), Vector3d.forward) * Vector3d.right) - vessel.mainBody.pqsController.radius);
+            }
+
+            double surfaceAltitudeASL = altitudeASL - altitudeTrue;
+            altitudeBottom = altitudeTrue;
+            foreach (Part p in vessel.parts)
+            {
+                if (p.collider != null)
+                {
+                    Vector3d bottomPoint = p.collider.ClosestPointOnBounds(vessel.mainBody.position);
+                    double partBottomAlt = vessel.mainBody.GetAltitude(bottomPoint) - surfaceAltitudeASL;
+                    altitudeBottom = Math.Max(0, Math.Min(altitudeBottom, partBottomAlt));
+                }
             }
 
             atmosphericDensity = FlightGlobals.getAtmDensity(FlightGlobals.getStaticPressure(altitudeASL, vessel.mainBody));
@@ -123,50 +143,61 @@ namespace MuMech {
             orbitPeA.value = vessel.orbit.PeA;
             orbitPeriod.value = vessel.orbit.period;
             orbitTimeToAp.value = vessel.orbit.timeToAp;
-            orbitTimeToPe.value = vessel.orbit.timeToPe;
+            if (vessel.orbit.eccentricity < 1) orbitTimeToPe.value = vessel.orbit.timeToPe;
+            else orbitTimeToPe.value = -vessel.orbit.meanAnomaly / (2 * Math.PI / vessel.orbit.period); //orbit.timeToPe is bugged for ecc > 1 and timewarp > 2x
             orbitLAN.value = vessel.orbit.LAN;
             orbitArgumentOfPeriapsis.value = vessel.orbit.argumentOfPeriapsis;
             orbitInclination.value = vessel.orbit.inclination;
             orbitEccentricity.value = vessel.orbit.eccentricity;
             orbitSemiMajorAxis.value = vessel.orbit.semiMajorAxis;
             latitude.value = vessel.mainBody.GetLatitude(CoM);
-            longitude.value = vessel.mainBody.GetLongitude(CoM);
+            longitude.value = ARUtils.clampDegrees(vessel.mainBody.GetLongitude(CoM));
 
             radius = (CoM - vessel.mainBody.position).magnitude;
 
             mass = thrustAvailable = thrustMinimum = massDrag = torqueRAvailable = torquePYAvailable = torqueThrustPYAvailable = 0;
             MoI = vessel.findLocalMOI(CoM);
-            foreach (Part p in vessel.parts) {
+            foreach (Part p in vessel.parts)
+            {
                 mass += p.mass;
                 massDrag += p.mass * p.maximum_drag;
                 MoI += p.Rigidbody.inertiaTensor;
-                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.LastStage) && (p.inverseStage == Staging.LastStage))) && ((p is LiquidEngine) || (p is SolidRocket))) {
-                    if (p is LiquidEngine) {
+                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.LastStage) && (p.inverseStage == Staging.LastStage))) && ((p is LiquidEngine) || (p is SolidRocket)))
+                {
+                    if (p is LiquidEngine)
+                    {
                         double usableFraction = Vector3d.Dot((p.transform.rotation * ((LiquidEngine)p).thrustVector).normalized, forward);
                         thrustAvailable += ((LiquidEngine)p).maxThrust * usableFraction;
                         thrustMinimum += ((LiquidEngine)p).minThrust * usableFraction;
-                        if (((LiquidEngine)p).thrustVectoringCapable) {
+                        if (((LiquidEngine)p).thrustVectoringCapable)
+                        {
                             torqueThrustPYAvailable += Math.Sin(Math.Abs(((LiquidEngine)p).gimbalRange) * Math.PI / 180) * ((LiquidEngine)p).maxThrust * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
                         }
-                    } else if (p is SolidRocket) {
+                    }
+                    else if (p is SolidRocket)
+                    {
                         double usableFraction = Vector3d.Dot((p.transform.rotation * ((SolidRocket)p).thrustVector).normalized, forward);
                         thrustAvailable += ((SolidRocket)p).thrust * usableFraction;
                         thrustMinimum += ((SolidRocket)p).thrust * usableFraction;
                     }
                 }
-                if ((!FlightInputHandler.RCSLock) && (p is RCSModule)) {
+                if ((!FlightInputHandler.RCSLock) && (p is RCSModule))
+                {
                     double maxT = 0;
-                    for (int i = 0; i < 6; i++) {
-                        if (((RCSModule)p).thrustVectors[i] != Vector3.zero) {
+                    for (int i = 0; i < 6; i++)
+                    {
+                        if (((RCSModule)p).thrustVectors[i] != Vector3.zero)
+                        {
                             maxT = Math.Max(maxT, ((RCSModule)p).thrusterPowers[i]);
                         }
                     }
                     // torqueRAvailable += maxT;
                     torquePYAvailable += maxT * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
                 }
-                if (p is CommandPod) {
+                if (p is CommandPod)
+                {
                     torqueRAvailable += Math.Abs(((CommandPod)p).rotPower);
-                    torquePYAvailable += Math.Abs(((CommandPod)p).rotPower) * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
+                    torquePYAvailable += Math.Abs(((CommandPod)p).rotPower);
                 }
             }
 
@@ -176,7 +207,8 @@ namespace MuMech {
             minThrustAccel = thrustMinimum / mass;
         }
 
-        public double TerminalVelocity() {
+        public double TerminalVelocity()
+        {
             return Math.Sqrt((2 * gravityForce.magnitude * mass) / (0.009785 * Math.Exp(-altitudeASL / 5000.0) * massDrag));
         }
 

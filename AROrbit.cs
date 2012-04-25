@@ -5,7 +5,7 @@ using System.Text;
 using UnityEngine;
 
 /*
- * I could figure out how to use HarvesteR's Orbit class to solve for arbitrary orbits,
+ * I couldn't figure out how to use HarvesteR's Orbit class to solve for arbitrary orbits,
  * so here is a class that lets you solve for an orbit given arbitrary initial
  * conditions and then ask for the position and velocity at later times.
  * 
@@ -15,7 +15,7 @@ using UnityEngine;
 namespace MuMech
 {
 
-    class AROrbit
+    public class AROrbit
     {
         CelestialBody referenceBody;
         double GM;
@@ -32,7 +32,17 @@ namespace MuMech
 
         bool hyperbolic;
 
+        public double period;
 
+        public double periapsis()
+        {
+            return semiMajorAxis * (1 - eccentricity);
+        }
+
+        public double apoapsis()
+        {
+            return semiMajorAxis * (1 + eccentricity);
+        }
 
         public Vector3d positionAtTime(double time)
         {
@@ -60,7 +70,8 @@ namespace MuMech
 
             Vector3d vel = speed * (Math.Cos(angleFromHorizontal) * horizontalUnit + Math.Sin(angleFromHorizontal) * upUnit);
 
-            if(double.IsNaN(vel.x)) {
+            if (double.IsNaN(vel.x))
+            {
                 print("AROrbit: velocityAtTime returning NaN!!!");
             }
 
@@ -83,7 +94,17 @@ namespace MuMech
         {
             if (!hyperbolic)
             {
-                double trueAnomaly = Math.Acos((Math.Cos(eccAnomaly) - eccentricity) / (1 - eccentricity * Math.Cos(eccAnomaly)));
+                double cosTrueAnomaly = (Math.Cos(eccAnomaly) - eccentricity) / (1 - eccentricity * Math.Cos(eccAnomaly));
+                if (cosTrueAnomaly > 1) cosTrueAnomaly = 1;
+                if (cosTrueAnomaly < -1) cosTrueAnomaly = -1;
+                double trueAnomaly = Math.Acos(cosTrueAnomaly);
+                if (double.IsNaN(trueAnomaly))
+                {
+                    print("AROrbit.trueAnomalyFromEccentricAnomaly: calculated NaN elliptic true anomaly");
+                    print("Acos argument = " + (Math.Cos(eccAnomaly) - eccentricity) / (1 - eccentricity * Math.Cos(eccAnomaly)));
+                    print("eccAnomaly = " + eccAnomaly);
+                    print("eccentricity = " + eccentricity);
+                }
                 if ((meanAnomaly + 2 * Math.PI) % (2 * Math.PI) < Math.PI)
                 {
                     return trueAnomaly;
@@ -95,7 +116,14 @@ namespace MuMech
             }
             else
             {
-                double trueAnomaly = Math.Acos((Math.Cosh(eccAnomaly) - eccentricity) / (1 - eccentricity * Math.Cosh(eccAnomaly)));
+                double cosTrueAnomaly = (Math.Cosh(eccAnomaly) - eccentricity) / (1 - eccentricity * Math.Cosh(eccAnomaly));
+                if (cosTrueAnomaly > 1) cosTrueAnomaly = 1;
+                if (cosTrueAnomaly < -1) cosTrueAnomaly = -1;
+                double trueAnomaly = Math.Acos(cosTrueAnomaly);
+                if (double.IsNaN(trueAnomaly))
+                {
+                    print("AROrbit.trueAnomalyFromEccentricAnomaly: calculated NaN hyperbolic true anomaly");
+                }
                 if (meanAnomaly < 0) trueAnomaly = -trueAnomaly;
                 return trueAnomaly;
             }
@@ -107,6 +135,8 @@ namespace MuMech
         //code from http://www.projectpluto.com/kepler.htm
         double eccentricAnomalyFromMeanAnomaly(double meanAnomaly)
         {
+            if (double.IsNaN(meanAnomaly)) print("AROrbit: eccentricAnomalyFromMeanAnomaly given meanAnomaly = NaN");
+
             /*if (eccentricity < 0.3)
             {
                 double curr = Math.Atan2(Math.Sin(meanAnomaly), Math.Cos(meanAnomaly) - eccentricity);
@@ -116,10 +146,16 @@ namespace MuMech
                 return curr;
             }*/
 
+            //if (meanAnomaly > Math.PI) meanAnomaly = meanAnomaly - 2 * Math.PI;
+            //make sure meanAnomaly is in the range -pi to pi:
+            if (meanAnomaly < 0) meanAnomaly += (1 + (int)(Math.Abs(meanAnomaly) / (2 * Math.PI))) * (2 * Math.PI);
+            meanAnomaly %= (2 * Math.PI);
+
             bool negative = (meanAnomaly < 0);
             meanAnomaly = Math.Abs(meanAnomaly);
 
-            double threshold = 1.0e-8 * Math.Abs(1 - eccentricity);
+            //            double threshold = 1.0e-8 * Math.Abs(1 - eccentricity);
+            double threshold = 1.0e-10 * Math.Abs(1 - eccentricity);
 
             double current = meanAnomaly;
             if ((eccentricity > 0.8 && meanAnomaly < Math.PI / 3) || eccentricity > 1.0)
@@ -202,6 +238,10 @@ namespace MuMech
             }
         }
 
+        public AROrbit(Vessel v)
+            : this(v.findWorldCenterOfMass(), v.orbit.GetVel(), Planetarium.GetUniversalTime(), v.mainBody)
+        {
+        }
 
         public AROrbit(Vector3d pos, Vector3d vel, double time, CelestialBody body)
         {
@@ -211,7 +251,11 @@ namespace MuMech
             GM = ARUtils.G * body.Mass;
             energy = 0.5 * vel.sqrMagnitude - GM / radialVector.magnitude; //energy per unit mass
             eccentricity = Math.Sqrt(1 + 2 * energy * angularMomentum.sqrMagnitude / (GM * GM));
-
+            if (double.IsNaN(eccentricity))
+            {
+                print("AROrbit constructor: eccentricity is NaN!!!");
+                eccentricity = 0.001;
+            }
             hyperbolic = (eccentricity > 1.0);
 
             Vector3d rungeLenz = Vector3d.Cross(vel, angularMomentum) - GM * radialVector.normalized;
@@ -223,12 +267,22 @@ namespace MuMech
             if (!hyperbolic)
             {
                 double eccentricAnomaly = Math.Acos((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
+                if (double.IsNaN(eccentricAnomaly))
+                {
+                    print("AROrbit constructor: elliptic eccentric anomaly is NaN!");
+                    eccentricAnomaly = 0;
+                }
                 if (Vector3d.Dot(vel, radialVector) < 0) eccentricAnomaly = 2 * Math.PI - eccentricAnomaly;
                 meanAnomalyAtReferenceTime = eccentricAnomaly - eccentricity * Math.Sin(eccentricAnomaly);
             }
             else
             {
                 double eccentricAnomaly = Acosh((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
+                if (double.IsNaN(eccentricAnomaly))
+                {
+                    print("AROrbit constructor: hyperbolic eccentric anomaly is NaN!");
+                    eccentricAnomaly = 0;
+                }
                 if (Vector3d.Dot(vel, radialVector) < 0) eccentricAnomaly = -eccentricAnomaly;
                 meanAnomalyAtReferenceTime = eccentricity * Math.Sinh(eccentricAnomaly) - eccentricAnomaly;
             }
@@ -238,7 +292,12 @@ namespace MuMech
             semiMajorAxis = -0.5 * GM / energy;
 
             meanMotion = Math.Sqrt(GM / Math.Pow(Math.Abs(semiMajorAxis), 3));
+            if (double.IsNaN(meanMotion))
+            {
+                print("AROrbit constructor: mean motion is NaN!");
+            }
 
+            period = 2 * Math.PI / meanMotion;
         }
 
         static double Asinh(double x)
