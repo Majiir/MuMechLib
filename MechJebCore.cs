@@ -86,7 +86,7 @@ namespace MuMech
 
         public Part part;
 
-        private static bool calibrationMode = true;
+        private static bool calibrationMode = false;
         private static int windowIDbase = 60606;
         private int calibrationTarget = 0;
         private double[] calibrationDeltas = { 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500 };
@@ -620,6 +620,8 @@ namespace MuMech
 
         public void warpTo(ComputerModule controller, double timeLeft, double[] lookaheadTimes, double maxRate = 10000.0)
         {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller)) return;
+
             if (timeLeft < lookaheadTimes[TimeWarp.CurrentRateIndex]
                 || timeWarp.warpRates[TimeWarp.CurrentRateIndex] > maxRate)
             {
@@ -953,10 +955,11 @@ namespace MuMech
             modules.Add(new MechJebModuleTranslatron(this));
             modules.Add(new MechJebModuleOrbitInfo(this));
             modules.Add(new MechJebModuleSurfaceInfo(this));
-            //modules.Add(new MechJebModuleVesselInfo(this));
+            modules.Add(new MechJebModuleVesselInfo(this));
             modules.Add(new MechJebModuleLandingAutopilot(this));
             modules.Add(new MechJebModuleAscentAutopilot(this));
             modules.Add(new MechJebModuleOrbitOper(this));
+            //modules.Add(new MechJebModuleGlideslope(this));
             //modules.Add(new MechJebModuleOrbitPlane(this));
 
             //modules.Add(new MechJebModuleJoke(this));

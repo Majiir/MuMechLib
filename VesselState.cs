@@ -119,10 +119,14 @@ namespace MuMech
             {
                 altitudeTrue.value = sfc.distance;
             }
-            else
+            else if (vessel.mainBody.pqsController != null)
             {
                 // from here: http://kerbalspaceprogram.com/forum/index.php?topic=10324.msg161923#msg161923
                 altitudeTrue.value = vessel.mainBody.GetAltitude(CoM) - (vessel.mainBody.pqsController.GetSurfaceHeight(QuaternionD.AngleAxis(vessel.mainBody.GetLongitude(CoM), Vector3d.down) * QuaternionD.AngleAxis(vessel.mainBody.GetLatitude(CoM), Vector3d.forward) * Vector3d.right) - vessel.mainBody.pqsController.radius);
+            }
+            else
+            {
+                altitudeTrue.value = vessel.mainBody.GetAltitude(CoM);
             }
 
             double surfaceAltitudeASL = altitudeASL - altitudeTrue;

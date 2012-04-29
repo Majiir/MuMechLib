@@ -13,12 +13,8 @@ using UnityEngine;
  * -add a roll input (may require improved attitude controller)
  * 
  * Changed:
- * -added automatic launch window timing to rendezvous with an equatorial target
- * -added an "Ascent Stats" window with a breakdown of the launch's delta-v costs, total mass to orbit, and launch phase angle
- * -adding a "heading" input as an alternative to "inclination"
- * -fixed the cause of ugly, jumpy throttle control when throttle down to prevent overheat
- * -fixed the "circularize" button that appears during manual throttle control
- * -fixed a bug where the ship would initially pitch the wrong direction when the turn shape slider was to the right
+ * 
+ * -fixed failure of timed launch for rendezvous with targets above geosynchronous orbit
  * 
  */
 
@@ -452,7 +448,6 @@ namespace MuMech
 
             driveAutoStaging();
 
-            //given the mode, determine what direction the rocket should be pointing
             switch (mode)
             {
                 case AscentMode.VERTICAL_ASCENT:
@@ -476,6 +471,8 @@ namespace MuMech
             driveLimitOverheat(s);
 
             driveRendezvousStuff(s);
+
+            driveUpdateStats(s);
         }
 
 
@@ -516,7 +513,7 @@ namespace MuMech
             }
         }
 
-        void driveRendezvousStuff(FlightCtrlState s)
+        void driveUpdateStats(FlightCtrlState s)
         {
             if (mode != AscentMode.DISENGAGED && mode != AscentMode.ON_PAD)
             {
@@ -532,13 +529,19 @@ namespace MuMech
                 double longitudeTraversed = (vesselState.longitude - launchLongitude) + 360 * (vesselState.time - launchTime) / part.vessel.mainBody.rotationPeriod;
                 launchPhaseAngle = ARUtils.clampDegrees(360 * (vesselState.time - launchTime) / targetCircularPeriod - longitudeTraversed);
             }
+        }
 
+        void driveRendezvousStuff(FlightCtrlState s)
+        {
             if (mode == AscentMode.ON_PAD && timeIgnitionForRendezvous && rendezvousTarget != null)
             {
                 double phaseAngle = ARUtils.clampDegrees(vesselState.longitude - part.vessel.mainBody.GetLongitude(rendezvousTarget.transform.position));
                 double[] warpLookaheadTimes = new double[] { 10, 15, 20, 25, 50, 100, 1000, 10000 };
 
-                rendezvousIgnitionCountdown = ARUtils.clampDegrees(phaseAngle - predictedLaunchPhaseAngle) / 360 * rendezvousTarget.orbit.period;
+                double angleDifference = ARUtils.clampDegrees(phaseAngle - predictedLaunchPhaseAngle);
+                double angleRate = 360.0 / rendezvousTarget.orbit.period - 360 / part.vessel.mainBody.rotationPeriod;
+                rendezvousIgnitionCountdown = angleDifference / angleRate;
+
 
                 if (rendezvousIgnitionCountdown < 0.0 && rendezvousIgnitionCountdown > -1.0)
                 {
@@ -1194,7 +1197,7 @@ namespace MuMech
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("Launch phase angle:°", GUILayout.ExpandWidth(true));
+                GUILayout.Label("Launch phase angle:", GUILayout.ExpandWidth(true));
                 GUILayout.Label(String.Format("{0:0.00}°", launchPhaseAngle));
                 GUILayout.EndHorizontal();
             }

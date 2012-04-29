@@ -8,10 +8,6 @@ using UnityEngine;
 /*
  * Todo:
  * 
- * -fix exception when LAND touches down while Translatron window is open
- * 
- * -fix any bugs in LAND
- * 
  * Future:
  * -investigate and fix remaining failures of kepler solver to converge for high ecc orbits (managed to hang game activating land at target after a short hop up from munar surface)
  * -for mun landings, replace "predicted landing location" with "predicted impact site" when LAND-at-target isn't active     
@@ -23,14 +19,7 @@ using UnityEngine;
  * 
  * Changed:
  * 
- * -can specify touchdown speed
- * -smoother, safer landings since surface height is known well in advance
- * -displays coordinates when you mouse over surface in map view
- * -can click to select target location in map view
- * -added automatic deorbit burn
- * -solved some problems with high-ecc orbits
- * -in orbit info panel fixed incorrect time to Pe for hyperbolic orbits with timewarp > 2x
- * -will continue trajectories that go exoatmospheric as long as Pe < 0, to enable targeted suborbital hops
+ * -fixed bug where landing autopilot would not wait for deorbit burn point if it had deorbited before
  * 
  */
 
@@ -435,7 +424,6 @@ namespace MuMech
             GUILayout.BeginHorizontal();
 
             if (gettingMapTarget && !MapView.MapIsEnabled) gettingMapTarget = false;
-            GUI.SetNextControlName("MapTargetToggle");
             gettingMapTarget = GUILayout.Toggle(gettingMapTarget, "Select target on map", (gettingMapTarget ? greenStyle : normalStyle));
             if (gettingMapTarget && !MapView.MapIsEnabled) MapView.EnterMapView();
 
@@ -551,8 +539,15 @@ namespace MuMech
                 core.controlClaim(this);
                 core.landDeactivate(this);
 
-                if (part.vessel.orbit.PeA > -0.1 * part.vessel.mainBody.Radius) landStep = LandStep.DEORBIT_BURN;
-                else landStep = LandStep.COURSE_CORRECTIONS;
+                if (part.vessel.orbit.PeA < 0 || prediction.outcome == LandingPrediction.Outcome.LANDED)
+                {
+                    landStep = LandStep.COURSE_CORRECTIONS;
+                }
+                else
+                {
+                    landStep = LandStep.DEORBIT_BURN;
+                    deorbiting = false;
+                }
 
                 FlightInputHandler.SetNeutralControls();
             }

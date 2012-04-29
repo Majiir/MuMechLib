@@ -30,9 +30,12 @@ namespace MuMech
         double referenceTime;
         double meanAnomalyAtReferenceTime;
 
-        bool hyperbolic;
+        public bool hyperbolic;
 
         public double period;
+
+        static bool suppressDebug = false;
+        static int debugPrintCount = 0;
 
         public double periapsis()
         {
@@ -72,7 +75,7 @@ namespace MuMech
 
             if (double.IsNaN(vel.x))
             {
-                print("AROrbit: velocityAtTime returning NaN!!!");
+                debug("AROrbit: velocityAtTime returning NaN!!!");
             }
 
             return vel;
@@ -100,10 +103,10 @@ namespace MuMech
                 double trueAnomaly = Math.Acos(cosTrueAnomaly);
                 if (double.IsNaN(trueAnomaly))
                 {
-                    print("AROrbit.trueAnomalyFromEccentricAnomaly: calculated NaN elliptic true anomaly");
-                    print("Acos argument = " + (Math.Cos(eccAnomaly) - eccentricity) / (1 - eccentricity * Math.Cos(eccAnomaly)));
-                    print("eccAnomaly = " + eccAnomaly);
-                    print("eccentricity = " + eccentricity);
+                    debug("AROrbit.trueAnomalyFromEccentricAnomaly: calculated NaN elliptic true anomaly");
+                    debug("Acos argument = " + (Math.Cos(eccAnomaly) - eccentricity) / (1 - eccentricity * Math.Cos(eccAnomaly)));
+                    debug("eccAnomaly = " + eccAnomaly);
+                    debug("eccentricity = " + eccentricity);
                 }
                 if ((meanAnomaly + 2 * Math.PI) % (2 * Math.PI) < Math.PI)
                 {
@@ -122,7 +125,7 @@ namespace MuMech
                 double trueAnomaly = Math.Acos(cosTrueAnomaly);
                 if (double.IsNaN(trueAnomaly))
                 {
-                    print("AROrbit.trueAnomalyFromEccentricAnomaly: calculated NaN hyperbolic true anomaly");
+                    debug("AROrbit.trueAnomalyFromEccentricAnomaly: calculated NaN hyperbolic true anomaly");
                 }
                 if (meanAnomaly < 0) trueAnomaly = -trueAnomaly;
                 return trueAnomaly;
@@ -135,14 +138,14 @@ namespace MuMech
         //code from http://www.projectpluto.com/kepler.htm
         double eccentricAnomalyFromMeanAnomaly(double meanAnomaly)
         {
-            if (double.IsNaN(meanAnomaly)) print("AROrbit: eccentricAnomalyFromMeanAnomaly given meanAnomaly = NaN");
+            if (double.IsNaN(meanAnomaly)) debug("AROrbit: eccentricAnomalyFromMeanAnomaly given meanAnomaly = NaN");
 
             /*if (eccentricity < 0.3)
             {
                 double curr = Math.Atan2(Math.Sin(meanAnomaly), Math.Cos(meanAnomaly) - eccentricity);
                 double error = curr - eccentricity * Math.Sin(curr) - meanAnomaly;
                 curr -= error / (1.0 - eccentricity * Math.Cos(curr));
-                print("ecc < 0.3, eccAnomaly = " + curr);
+                debug("ecc < 0.3, eccAnomaly = " + curr);
                 return curr;
             }*/
 
@@ -188,7 +191,7 @@ namespace MuMech
                     error = current - eccentricity * Math.Sin(current) - meanAnomaly;
                     if (numIters > 100000)
                     {
-                        print("AROrbit: kepler solver (A) failed to converge!! (meanAnomaly = " + meanAnomaly + ")");
+                        debug("AROrbit: kepler solver (A) failed to converge!! (meanAnomaly = " + meanAnomaly + ")");
                         break;
                     }
                 }
@@ -204,7 +207,7 @@ namespace MuMech
 
                     if (numIters > 100000)
                     {
-                        print("AROrbit: kepler solver (B) failed to converge!! (meanAnomaly = " + meanAnomaly + ")");
+                        debug("AROrbit: kepler solver (B) failed to converge!! (meanAnomaly = " + meanAnomaly + ")");
                         break;
                     }
                 }
@@ -250,12 +253,7 @@ namespace MuMech
             angularMomentum = Vector3d.Cross(radialVector, vel);   //angular momentum per unit mass
             GM = ARUtils.G * body.Mass;
             energy = 0.5 * vel.sqrMagnitude - GM / radialVector.magnitude; //energy per unit mass
-            eccentricity = Math.Sqrt(1 + 2 * energy * angularMomentum.sqrMagnitude / (GM * GM));
-            if (double.IsNaN(eccentricity))
-            {
-                print("AROrbit constructor: eccentricity is NaN!!!");
-                eccentricity = 0.001;
-            }
+            eccentricity = Math.Sqrt(Math.Abs(1 + 2 * energy * angularMomentum.sqrMagnitude / (GM * GM))); //abs in case precision errors make the argument negative
             hyperbolic = (eccentricity > 1.0);
 
             Vector3d rungeLenz = Vector3d.Cross(vel, angularMomentum) - GM * radialVector.normalized;
@@ -269,7 +267,7 @@ namespace MuMech
                 double eccentricAnomaly = Math.Acos((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
                 if (double.IsNaN(eccentricAnomaly))
                 {
-                    print("AROrbit constructor: elliptic eccentric anomaly is NaN!");
+                    //debug("AROrbit constructor: elliptic eccentric anomaly is NaN!");
                     eccentricAnomaly = 0;
                 }
                 if (Vector3d.Dot(vel, radialVector) < 0) eccentricAnomaly = 2 * Math.PI - eccentricAnomaly;
@@ -280,7 +278,7 @@ namespace MuMech
                 double eccentricAnomaly = Acosh((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
                 if (double.IsNaN(eccentricAnomaly))
                 {
-                    print("AROrbit constructor: hyperbolic eccentric anomaly is NaN!");
+                    //debug("AROrbit constructor: hyperbolic eccentric anomaly is NaN!");
                     eccentricAnomaly = 0;
                 }
                 if (Vector3d.Dot(vel, radialVector) < 0) eccentricAnomaly = -eccentricAnomaly;
@@ -294,7 +292,7 @@ namespace MuMech
             meanMotion = Math.Sqrt(GM / Math.Pow(Math.Abs(semiMajorAxis), 3));
             if (double.IsNaN(meanMotion))
             {
-                print("AROrbit constructor: mean motion is NaN!");
+                debug("AROrbit constructor: mean motion is NaN!");
             }
 
             period = 2 * Math.PI / meanMotion;
@@ -311,6 +309,22 @@ namespace MuMech
             return (Math.Log(x + Math.Sqrt((x * x) - 1.0)));
         }
 
+        void debug(String s)
+        {
+            if (suppressDebug)
+            {
+                //print("(suppressed)");
+                return;
+            }
+            print(s);
+            debugPrintCount += 1;
+
+            if (debugPrintCount > 200)
+            {
+                print("AROrbit: too many debugging messages. Suppressing further debugging output.");
+                suppressDebug = true;
+            }
+        }
 
         void print(String s)
         {

@@ -12,8 +12,11 @@ using UnityEngine;
  * 
  * -make small orbit adjustments more precise (redo throttle management?)
  * -make sure inclination is OK in TRANS
- * -test what happens when you try to use TRANS from an elliptical orbit
- * -have TRANS give up if our apoapsis gets to twice the target's orbit radius or something
+ * 
+ * Changed:
+ * 
+ * -TRANS burns that miss the target won't hang the game
+ * -PE and AP+PE will reject periapsis below -(planet radius)
  * 
  */
 
@@ -268,6 +271,11 @@ namespace MuMech
                                 transferTarget = body;
                             }
                         }
+
+                        if (part.vessel.orbit.eccentricity > 1.0)
+                        {
+                            GUILayout.Label("Transfer injection failed. Did you start from a circular equatorial orbit?", ARUtils.labelStyle(Color.yellow));
+                        }
                     }
                     else
                     {
@@ -474,7 +482,7 @@ namespace MuMech
             else
             {
                 core.attitudeTo(-chooseThrustDirectionToRaisePeriapsis(), MechJebCore.AttitudeReference.INERTIAL, this);
-                endBurn = (managedValue < targetValue);
+                endBurn = (managedValue < targetValue || targetValue < -part.vessel.mainBody.Radius);
             }
 
             if (endBurn)
@@ -542,7 +550,7 @@ namespace MuMech
 
         void driveTransferInjection(FlightCtrlState s)
         {
-            if (transferTarget == null)
+            if (transferTarget == null || part.vessel.orbit.eccentricity > 1.0)
             {
                 endOperation();
                 return;
@@ -695,7 +703,7 @@ namespace MuMech
         {
             double newPeR = newPeA + part.vessel.mainBody.Radius;
             double newApR = newApA + part.vessel.mainBody.Radius;
-            if (vesselState.radius < newPeR || vesselState.radius > newApR) return Vector3d.zero;
+            if (vesselState.radius < newPeR || vesselState.radius > newApR || newPeR < 0) return Vector3d.zero;
             double GM = ARUtils.G * part.vessel.mainBody.Mass;
             double E = -GM / (newPeR + newApR);
             double L = Math.Sqrt(Math.Abs((Math.Pow(E * (newApR - newPeR), 2) - GM * GM) / (2 * E)));
@@ -723,7 +731,7 @@ namespace MuMech
             double newPeR = newPeA + part.vessel.mainBody.Radius;
 
             //don't bother with impossible maneuvers:
-            if (newPeR > vesselState.radius) return 0.0;
+            if (newPeR > vesselState.radius || newPeR < 0) return 0.0;
 
             //are we raising or lowering the periapsis?
             bool raising = (newPeR > new AROrbit(part.vessel).periapsis());
@@ -740,6 +748,7 @@ namespace MuMech
                     vesselState.time, part.vessel.mainBody).periapsis() < newPeR)
                 {
                     maxDeltaV *= 2;
+                    if (maxDeltaV > 100000) break; //a safety precaution
                 }
             }
             else
@@ -797,6 +806,7 @@ namespace MuMech
                     ap = new AROrbit(vesselState.CoM, vesselState.velocityVesselOrbit + maxDeltaV * burnDirection,
                                         vesselState.time, part.vessel.mainBody).apoapsis();
                     if (ap < 0) ap = double.MaxValue;
+                    if (maxDeltaV > 100000) break; //a safety precaution
                 }
             }
             else
@@ -847,23 +857,21 @@ namespace MuMech
 
         double predictSOISwitchTime(AROrbit transferOrbit, CelestialBody target, double startTime)
         {
+            if (transferOrbit.hyperbolic) return -1; //hyperbolic orbits not supported
+
             AROrbit targetOrbit = new AROrbit(target.position, target.orbit.GetVel(), vesselState.time, target.orbit.referenceBody);
             double minSwitchTime = startTime;
             double maxSwitchTime = 0;
 
-            for (double t = startTime; t < startTime + transferOrbit.period; )
+            double t = startTime;
+
+            while(true)
             {
                 Vector3d transferPos = transferOrbit.positionAtTime(t);
                 Vector3d targetPos = targetOrbit.positionAtTime(t);
                 if ((transferPos - targetPos).magnitude < target.sphereOfInfluence)
                 {
                     maxSwitchTime = t;
-                    Vector3d transferVelS = transferOrbit.velocityAtTime(t);
-                    Vector3d targetVelS = targetOrbit.velocityAtTime(t);
-                    double transferPeTime = vesselState.time - (part.vessel.orbit.period - part.vessel.orbit.timeToPe);
-                    double targetPeTime = vesselState.time - (target.orbit.period - target.orbit.timeToPe);
-                    Vector3d kspTransferPosition = part.vessel.orbit.getPositionAt(t - transferPeTime);
-                    Vector3d kspTargetPosition = target.orbit.getPositionAt(t - targetPeTime);
                     break;
                 }
                 else
@@ -876,10 +884,18 @@ namespace MuMech
                 Vector3d targetVel = targetOrbit.velocityAtTime(t);
                 Vector3d relativeVel = transferVel - targetVel;
                 t += 0.1 * target.sphereOfInfluence / relativeVel.magnitude;
+
+                if(t > startTime + transferOrbit.period) break;
+
+                //guard against taking infinitely long on hyperbolic or very elliptical orbits:
+                double maxTargetSOIRadius = (target.position - part.vessel.mainBody.position).magnitude + target.sphereOfInfluence;
+                if((transferPos - part.vessel.mainBody.position).magnitude > 2 * maxTargetSOIRadius) break;
             }
 
-            if (maxSwitchTime == 0) return -1; //didn't intersect target's SOI
-
+            if (maxSwitchTime == 0)
+            {
+                return -1; //didn't intersect target's SOI
+            }
 
             //do a binary search for the SOI entrance time:
             while (maxSwitchTime - minSwitchTime > 1.0)
