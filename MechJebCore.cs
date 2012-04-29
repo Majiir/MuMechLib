@@ -955,7 +955,7 @@ namespace MuMech
             modules.Add(new MechJebModuleTranslatron(this));
             modules.Add(new MechJebModuleOrbitInfo(this));
             modules.Add(new MechJebModuleSurfaceInfo(this));
-            modules.Add(new MechJebModuleVesselInfo(this));
+            //modules.Add(new MechJebModuleVesselInfo(this));
             modules.Add(new MechJebModuleLandingAutopilot(this));
             modules.Add(new MechJebModuleAscentAutopilot(this));
             modules.Add(new MechJebModuleOrbitOper(this));
