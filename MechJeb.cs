@@ -60,7 +60,7 @@ public class MuMechJeb : MuMechPart
             return;
         }
 
-        brain = (GameObject)GameObject.Instantiate(Resources.Load("Effects/fx_exhaustFlame_blue"));
+        brain = (GameObject)GameObject.Instantiate(UnityEngine.Resources.Load("Effects/fx_exhaustFlame_blue"));
         brain.name = "brain_FX";
         brain.transform.parent = transform.Find("model");
         if (transform.Find("model/base/Door03") == null)

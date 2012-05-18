@@ -444,7 +444,7 @@ namespace MuMech
         {
             if (mode == AscentMode.DISENGAGED) return;
 
-            if (mode == AscentMode.ON_PAD && Staging.CurrentStage <= Staging.LastStage) mode = AscentMode.VERTICAL_ASCENT;
+            if (mode == AscentMode.ON_PAD && Staging.CurrentStage <= Staging.lastStage) mode = AscentMode.VERTICAL_ASCENT;
 
             driveAutoStaging();
 
@@ -754,7 +754,7 @@ namespace MuMech
             if (Vector3d.Dot(vesselState.velocityVesselOrbit, vesselState.up) < 0) //if we have started to descend, i.e. reached apoapsis, circularize
             {
                 mode = AscentMode.CIRCULARIZE;
-                if (TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(0);
+                if (TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(0, false);
                 return;
             }
 
@@ -1047,7 +1047,7 @@ namespace MuMech
                 }
 
                 bool newAutoWarp = GUILayout.Toggle(autoWarpToApoapsis, "Auto-warp toward apoapsis?", new GUIStyle(GUI.skin.toggle));
-                if (autoWarpToApoapsis && !newAutoWarp && TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(0);
+                if (autoWarpToApoapsis && !newAutoWarp && TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(0, true);
                 autoWarpToApoapsis = newAutoWarp;
 
 
@@ -1382,15 +1382,16 @@ namespace MuMech
         public override void onFlightStart()
         {
             updatePathTexture();
-
-            part.vessel.orbit.OnReferenceBodyChange += new Orbit.CelestialBodyDelegate(this.handleReferenceBodyChange);
+            //TODO: Fix this
+            //part.vessel.orbit.OnReferenceBodyChange += new Orbit.CelestialBodyDelegate(this.handleReferenceBodyChange);
         }
 
-
+        /*
         void handleReferenceBodyChange(CelestialBody body)
         {
             if (Staging.CurrentStage != Staging.StageCount) enabled = false; //if statement is needed or else this executes on restarting
         }
+        */
 
         public override void onFlightStartAtLaunchPad() //Called when vessel is placed on the launchpad
         {

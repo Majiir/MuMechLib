@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using System.IO;
 using UnityEngine;
 
 namespace MuMech
@@ -254,11 +253,9 @@ namespace MuMech
         public void load()
         {
             settings.Clear();
-            if (File.Exists(saveFile))
+            if (KSP.IO.File.Exists<MechJebCore>(saveFile))
             {
-                TextReader t = new StreamReader(saveFile);
-                string[] ls = t.ReadToEnd().Split("\n".ToCharArray());
-                t.Close();
+                string[] ls = KSP.IO.File.ReadAllLines<MechJebCore>(saveFile);
 
                 foreach (string l in ls)
                 {
@@ -280,16 +277,12 @@ namespace MuMech
         {
             if (saveFile.Length > 0)
             {
-                if (!Directory.Exists(Path.GetDirectoryName(saveFile)))
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(saveFile));
-                }
-                TextWriter t = new StreamWriter(saveFile);
+                StringBuilder tmp = new StringBuilder();
                 foreach (KeyValuePair<string, Setting> s in settings)
                 {
-                    t.Write(s.Key + "=" + s.Value.save() + "\n");
+                    tmp.Append(s.Key + "=" + s.Value.save() + "\n");
                 }
-                t.Close();
+                KSP.IO.File.WriteAllText<MechJebCore>(tmp.ToString(), saveFile);
             }
         }
     }

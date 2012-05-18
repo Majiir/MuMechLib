@@ -248,7 +248,7 @@ public class MuMechToggle : MuMechPart
             }
         }
         reparentFriction(transform);
-        transform.RotateAround(transform.TransformPoint(rotatePivot), transform.TransformDirection(-rotateAxis), (invertSymmetry ? ((isSymmMaster() || (symmetryCounterparts.Count != 2)) ? 1 : -1) : 1) * (rotation - rotationDelta));
+        transform.RotateAround(transform.TransformPoint(rotatePivot), transform.TransformDirection(-rotateAxis), (invertSymmetry ? ((isSymmMaster() || (symmetryCounterparts.Count != 1)) ? 1 : -1) : 1) * (rotation - rotationDelta));
         transform.Translate(translateAxis.normalized * (translation - translationDelta), Space.Self);
         rotationDelta = rotationLast = rotation;
         translationDelta = translation;
@@ -529,13 +529,13 @@ public class MuMechToggle : MuMechPart
             if (rotateJoint)
             {
                 SoftJointLimit tmp = ((ConfigurableJoint)attachJoint).lowAngularXLimit;
-                tmp.limit = (invertSymmetry ? ((isSymmMaster() || (symmetryCounterparts.Count != 2)) ? 1 : -1) : 1) * (rotation - rotationDelta);
+                tmp.limit = (invertSymmetry ? ((isSymmMaster() || (symmetryCounterparts.Count != 1)) ? 1 : -1) : 1) * (rotation - rotationDelta);
                 ((ConfigurableJoint)attachJoint).lowAngularXLimit = ((ConfigurableJoint)attachJoint).highAngularXLimit = tmp;
                 rotationLast = rotation;
             }
             else
             {
-                Quaternion curRot = Quaternion.AngleAxis((invertSymmetry ? ((isSymmMaster() || (symmetryCounterparts.Count != 2)) ? 1 : -1) : 1) * rotation, rotateAxis);
+                Quaternion curRot = Quaternion.AngleAxis((invertSymmetry ? ((isSymmMaster() || (symmetryCounterparts.Count != 1)) ? 1 : -1) : 1) * rotation, rotateAxis);
                 transform.FindChild("model").FindChild(rotate_model).localRotation = curRot;
             }
             rotationChanged = 0;

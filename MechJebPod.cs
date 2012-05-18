@@ -97,7 +97,7 @@ public class MuMechJebPod : CommandPod
             return;
         }
 
-        brain = (GameObject)GameObject.Instantiate(Resources.Load("Effects/fx_exhaustFlame_blue"));
+        brain = (GameObject)GameObject.Instantiate(UnityEngine.Resources.Load("Effects/fx_exhaustFlame_blue"));
         brain.name = "brain_FX";
         brain.transform.parent = transform.Find("model");
         brain.transform.localPosition = new Vector3(0, 0.2F, 0);

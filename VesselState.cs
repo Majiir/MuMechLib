@@ -166,7 +166,7 @@ namespace MuMech
                 mass += p.mass;
                 massDrag += p.mass * p.maximum_drag;
                 MoI += p.Rigidbody.inertiaTensor;
-                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.LastStage) && (p.inverseStage == Staging.LastStage))) && ((p is LiquidEngine) || (p is SolidRocket)))
+                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.lastStage) && (p.inverseStage == Staging.lastStage))) && ((p is LiquidEngine) || (p is SolidRocket)))
                 {
                     if (p is LiquidEngine)
                     {

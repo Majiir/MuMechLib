@@ -562,7 +562,7 @@ namespace MuMech
                 double transferHalfPeriod = 0.5 * 2 * Math.PI / Math.Sqrt(ARUtils.G * part.vessel.mainBody.Mass) * Math.Pow(transferSemiMajorAxis, 1.5);
                 double targetTimeSincePe = transferTarget.orbit.period - transferTarget.orbit.timeToPe;
                 double targetArrivalTimeSincePe = targetTimeSincePe + transferHalfPeriod;
-                Vector3d targetArrivalPosition = transferTarget.orbit.getPositionAt(targetArrivalTimeSincePe);
+                Vector3d targetArrivalPosition = transferTarget.orbit.getPositionAtT(targetArrivalTimeSincePe);
                 Vector3d vesselArrivalPosition = part.vessel.mainBody.position - transferTarget.orbit.PeR * vesselState.up;
                 Vector3d targetPlaneNormal = Vector3d.Cross(transferTarget.position - part.vessel.mainBody.position, transferTarget.orbit.GetVel());
                 Vector3d vesselArrivalPositionTargetPlane = part.vessel.mainBody.position + Vector3d.Exclude(targetPlaneNormal - part.vessel.mainBody.position, vesselArrivalPosition);
@@ -680,6 +680,8 @@ namespace MuMech
             return throttle;
         }
 
+        /*
+         * TODO: Fix this
         public override void onFlightStart()
         {
             part.vessel.orbit.OnReferenceBodyChange += new Orbit.CelestialBodyDelegate(this.handleReferenceBodyChange);
@@ -689,7 +691,7 @@ namespace MuMech
         {
             endOperation();
         }
-
+        */
 
 
         Vector3d circularizationVelocityCorrection()

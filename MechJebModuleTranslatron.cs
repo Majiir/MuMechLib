@@ -137,7 +137,7 @@ namespace MuMech
 
         public void recursiveDecouple()
         {
-            int minStage = Staging.LastStage;
+            int minStage = Staging.lastStage;
             foreach (Part child in part.vessel.parts)
             {
                 if ((child is LiquidEngine) || (child is SolidRocket))

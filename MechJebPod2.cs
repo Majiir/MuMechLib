@@ -105,7 +105,7 @@ public class MuMechJebPod2 : CommandPod
             return;
         }
 
-        brain[0] = (GameObject)GameObject.Instantiate(Resources.Load("Effects/fx_exhaustFlame_blue"));
+        brain[0] = (GameObject)GameObject.Instantiate(UnityEngine.Resources.Load("Effects/fx_exhaustFlame_blue"));
         brain[0].name = "brain_FX";
         brain[0].transform.parent = transform.Find("model");
         brain[0].transform.localPosition = new Vector3(0, -0.2F, 0);
@@ -329,13 +329,15 @@ public class MuMechJebPod2 : CommandPod
 
     public override void onBackup()
     {
+        /*
         if (!craftLoaded)
         {
             if ((this.children.Count == 0))
             {
                 try
                 {
-                    System.IO.File.Copy(KSPUtil.ApplicationRootPath + "Parts/mumech_MechJebPod2/default.craft", KSPUtil.ApplicationRootPath + "Ships/__mechjebpod_tmp.craft", true);
+                    KSP.IO.File.WriteAllText<MuMechJebPod2>(KSP.IO.File.ReadAllText<MuMechJebPod2>(KSPUtil.ApplicationRootPath + "Parts/mumech_MechJebPod2/default.craft"), KSPUtil.ApplicationRootPath + "Ships/__mechjebpod_tmp.craft");
+                    //System.IO.File.Copy(KSPUtil.ApplicationRootPath + "Parts/mumech_MechJebPod2/default.craft", KSPUtil.ApplicationRootPath + "Ships/__mechjebpod_tmp.craft", true);
                 }
                 catch (Exception)
                 {
@@ -347,7 +349,8 @@ public class MuMechJebPod2 : CommandPod
             {
                 try
                 {
-                    System.IO.File.Delete(KSPUtil.ApplicationRootPath + "Ships/__mechjebpod_tmp.craft");
+                    KSP.IO.File.Delete<MuMechJebPod2>(KSPUtil.ApplicationRootPath + "Ships/__mechjebpod_tmp.craft");
+                    //System.IO.File.Delete(KSPUtil.ApplicationRootPath + "Ships/__mechjebpod_tmp.craft");
                 }
                 catch (Exception)
                 {
@@ -355,6 +358,7 @@ public class MuMechJebPod2 : CommandPod
             }
             craftLoaded = true;
         }
+        */
         core.onBackup();
         base.onBackup();
     }

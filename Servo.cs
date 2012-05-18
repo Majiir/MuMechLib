@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
-using System.Runtime.Serialization.Formatters.Binary;
-using System.IO;
 using UnityEngine;
 
 namespace MuMech
@@ -79,10 +77,7 @@ public class MuMechServo : MuMechToggle
                 settings["key"] = "";
                 settings["revkey"] = "";
             }
-            MemoryStream ms = new MemoryStream();
-            BinaryFormatter f = new BinaryFormatter();
-            f.Serialize(ms, settings);
-            customPartData = Convert.ToBase64String(ms.ToArray()).Replace("=", "*");
+            customPartData = Convert.ToBase64String(KSP.IO.IOTools.SerializeToBinary(settings)).Replace("=", "*").Replace("/", "|");
         }
         base.onBackup();
     }
@@ -106,8 +101,7 @@ public class MuMechServo : MuMechToggle
         allServos.Add(this);
         if (customPartData != "")
         {
-            BinaryFormatter f = new BinaryFormatter();
-            Dictionary<string, object> settings = (Dictionary<string, object>)f.Deserialize(new MemoryStream(Convert.FromBase64String(customPartData.Replace("*", "="))));
+            Dictionary<string, object> settings = (Dictionary<string, object>)KSP.IO.IOTools.DeserializeFromBinary(Convert.FromBase64String(customPartData.Replace("*", "=").Replace("|", "/")));
             servoName = (string)settings["name"];
             string groupName = (string)settings["group"];
             if (groupName != "")

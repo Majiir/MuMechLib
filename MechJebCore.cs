@@ -762,9 +762,9 @@ namespace MuMech
                 double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
                 t_prev_err = t_err;
 
-                double int_error = Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward));
+                double int_error = attitudeActive?Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)):0;
                 //print("int_error = " + int_error);
-                if ((tmode != TMode.KEEP_VERTICAL) || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 90)))
+                if ((tmode != TMode.KEEP_VERTICAL) || !trans_kill_h || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 90)))
                 {
                     if (tmode == TMode.DIRECT)
                     {
@@ -959,6 +959,7 @@ namespace MuMech
             modules.Add(new MechJebModuleLandingAutopilot(this));
             modules.Add(new MechJebModuleAscentAutopilot(this));
             modules.Add(new MechJebModuleOrbitOper(this));
+            modules.Add(new MechJebModuleRendezvous(this));
             //modules.Add(new MechJebModuleGlideslope(this));
             //modules.Add(new MechJebModuleOrbitPlane(this));
 
@@ -1015,7 +1016,7 @@ namespace MuMech
             if (((part.vessel.rootPart is Decoupler) || (part.vessel.rootPart is RadialDecoupler)) && part.vessel.rootPart.gameObject.layer != 2)
             {
                 print("Disabling collision with decoupler...");
-                EditorLogic.setPartLayer(part.vessel.rootPart.gameObject, 2);
+                EditorLogic.SetLayerRecursive(part.vessel.rootPart.gameObject, 2);
             }
 
             if (part.vessel.orbit.objectType != Orbit.ObjectType.VESSEL)
@@ -1031,7 +1032,7 @@ namespace MuMech
                     if ((p is Decoupler) || (p is RadialDecoupler))
                     {
                         print("Disabling collision with decoupler...");
-                        EditorLogic.setPartLayer(p.gameObject, 2);
+                        EditorLogic.SetLayerRecursive(p.gameObject, 2);
                     }
                 }
 
@@ -1068,7 +1069,7 @@ namespace MuMech
                     module.onPartFixedUpdate();
                 }
 
-                if (!liftedOff && (FlightGlobals.ActiveVessel == part.vessel) && (Staging.CurrentStage <= Staging.LastStage))
+                if (!liftedOff && (FlightGlobals.ActiveVessel == part.vessel) && (Staging.CurrentStage <= Staging.lastStage))
                 {
                     foreach (ComputerModule module in modules)
                     {
