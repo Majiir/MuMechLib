@@ -30,15 +30,24 @@ namespace MuMech
     public enum UIMode
     {
         OFF,
-        VESSELS,
+        TARGET_SELECTION,
         SELECTED,
         RENDEZVOUS,
         ALIGN,
         SYNC,
     }
-    
-    private UIMode _mode = UIMode.VESSELS;
+
+    protected static string[] sel_texts = {"Bodies","Debris","Vessels"};
+    public enum TgtMode
+    {
+    BODIES,
+    DEBRIS,
+    VESSELS
+    }
+    public TgtMode TargetMode = TgtMode.BODIES; 
+    private UIMode _mode = UIMode.TARGET_SELECTION;
     private bool _modeChanged;
+		
 
     public UIMode Mode
     {
@@ -206,12 +215,13 @@ namespace MuMech
         if (Mode == UIMode.OFF)
             RenderOffUI(sty,but);
 
-        if (Mode == UIMode.VESSELS)
-            RenderVesselsUI(sty,but);
+        if (Mode == UIMode.TARGET_SELECTION)
+            RenderTargetSelectUI(sty,but);
 
-        if (Mode == UIMode.SELECTED)
-            RenderSelectedUI(sty,but);
-
+        if (Mode == UIMode.SELECTED && core.targetType==MechJebCore.TargetType.BODY)
+            RenderTargetInfoUI(sty,but);
+        if (Mode == UIMode.SELECTED && core.targetType!=MechJebCore.TargetType.BODY)
+			RenderSelectedUI(sty,but);
         if (Mode == UIMode.ALIGN)
             RenderAlignUI(sty,but);
 
@@ -240,8 +250,173 @@ namespace MuMech
     {
         if (GUILayout.Button("OPEN", but, GUILayout.ExpandWidth(true)))
         {
-            Mode = UIMode.VESSELS;
+            Mode = UIMode.TARGET_SELECTION;
         }
+    }
+    
+    private void RenderTargetInfoUI(GUIStyle sty, GUIStyle but)
+    
+    {
+    GUILayout.BeginVertical();
+    if (GUILayout.Button ("Back",but))
+    {
+    Mode = UIMode.TARGET_SELECTION;
+    core.setTarget();
+    }
+    GUILayout.Label (" ", sty);
+    //Body
+    
+    if (core.targetType == MechJebCore.TargetType.BODY){
+    
+    GUILayout.Label ("Time to AN : " +
+                      part.vessel.orbit.GetTimeToRelAN (core.targetBody.orbit).ToString ("F2"), sty);
+				GUILayout.Label ("Time to DN : " +
+                      part.vessel.orbit.GetTimeToRelDN (core.targetBody.orbit).ToString ("F2"), sty);
+				GUILayout.Label ("Relative Inclination :" + (core.targetBody.orbit.inclination-vesselState.orbitInclination).ToString ("F2"), sty);
+    GUILayout.EndVertical();
+    }
+    //
+    // Vessel/Debris
+    if (core.targetType == MechJebCore.TargetType.VESSEL) {
+				if (!CheckVessel ()) {
+					_flyByWire = false;
+					Mode = UIMode.TARGET_SELECTION;
+				}
+	//align planes data
+	GUILayout.Label ("Time to AN : " +
+                      part.vessel.orbit.GetTimeToRelAN (core.targetVessel.orbit).ToString ("F2"),sty);
+	GUILayout.Label ("Time to DN : " +
+                      part.vessel.orbit.GetTimeToRelDN (core.targetVessel.orbit).ToString ("F2"),sty);
+	GUILayout.Label ("Relative Inclination :" + (core.targetVessel.orbit.inclination - vesselState.orbitInclination).ToString ("F2"),sty);
+	GUILayout.EndVertical();
+	
+	//sync orbits data
+	/*
+    GUILayout.BeginHorizontal();
+    for (int i = 0; i < NumberOfPredictedSyncPoints; i++)
+    {
+        if (i != (int) SyncMode) 
+            continue;
+
+        if (GUILayout.Button(SyncMode.ToString(),but, GUILayout.ExpandWidth(true)))
+        {
+            if (i == NumberOfPredictedSyncPoints - 1) SyncMode = 0;
+            else SyncMode = SyncMode + 1;
+        }
+        //GUILayout.Box(SyncMode.ToString(),but);
+    }
+    GUILayout.EndHorizontal();
+    GUILayout.BeginVertical();
+
+    GUILayout.Box("Orbit		ShipToR		TgtToR ", GUILayout.ExpandWidth(true));
+    for (int i = 0; i < 4; i++)
+        GUILayout.Box(_syncString[i]);
+
+    GUILayout.Label("Closest Approach on Orbit " + _closestApproachOrbit.ToString(),sty);
+    GUILayout.Label("Min Separation (sec) : " + _minimumPredictedTimeFromTarget.ToString("f1"),sty);
+	
+	if (automation ==true)
+	{
+	    if(GUILayout.Button(_autoPhaser ? _autoPhaserState.ToString() : "Auto Sync", but, GUILayout.ExpandWidth(true)))
+	    {
+	        _autoPhaser = !_autoPhaser;
+	        _autoPhaserState = AutoPhaserState.Step1WaitForTargetApsis;
+	    }
+    }
+	
+				 */
+	//rendevous data
+		}
+    
+    }
+    
+    private void RenderTargetSelectUI(GUIStyle sty, GUIStyle but)
+    {
+    	GUILayout.Label("Select Target", sty);
+    	TargetMode = (TgtMode)GUILayout.SelectionGrid ((int)TargetMode, sel_texts, 3, but);
+    	_scrollPosition = GUILayout.BeginScrollView (_scrollPosition, GUILayout.Width (300), GUILayout.Height (300));
+    	List<Vessel> vesselList = new List<Vessel>(FlightGlobals.Vessels);
+    	List<CelestialBody> bodyList = new List<CelestialBody>(FlightGlobals.Bodies);
+    
+    	switch (TargetMode)
+		{
+    		case TgtMode.BODIES:
+    		for (int i = 1; i< bodyList.Count; i++)
+    		{
+    			if (bodyList[i].orbit.referenceBody != this.part.vessel.orbit.referenceBody)
+    				continue;
+    			if(GUILayout.Button(bodyList[i].name,but,GUILayout.ExpandWidth(true)))
+				{
+    				Mode = UIMode.SELECTED;
+    				core.setTarget(bodyList[i]);
+    			} 
+    
+			}
+    
+    	break;
+    	
+    		case TgtMode.DEBRIS:
+    			for (int i=0; i<vesselList.Count;i++)
+    			{
+    				// skip real vessels
+    				if (vesselList[i].isCommandable == true)
+    				continue;
+    				
+    				// Skip stuff around other worlds.
+					if (part.vessel.orbit.referenceBody != vesselList [i].orbit.referenceBody)
+						continue;
+    				
+    				if (GUILayout.Button(vesselList[i].vesselName, but,GUILayout.ExpandWidth(true)))
+            {
+                Mode = UIMode.SELECTED;
+                _selectedVesselInstanceId = vesselList[i].GetInstanceID();
+                _selectedVesselIndex = FlightGlobals.Vessels.IndexOf(vesselList[i]);
+                core.setTarget(vesselList[i]);
+    			}
+    		}
+    				
+			break;
+			case TgtMode.VESSELS:
+        var vdc = new VesselDistanceComparer();
+     
+        vdc.OriginVessel = part.vessel;
+
+        vesselList.Sort(vdc);
+
+        for (int i = 0; i < vesselList.Count; i++)
+        {
+            // Skip ourselves.
+            if (vesselList[i] == part.vessel)
+                continue;
+				
+            if (vesselList[i].LandedOrSplashed)
+                continue;
+
+            // Skip stuff around other worlds.
+            if (part.vessel.orbit.referenceBody != vesselList[i].orbit.referenceBody)
+                continue;
+            //Skip Debris
+            if (vesselList[i].isCommandable == false)
+            	continue;
+
+            // Calculate the distance.
+            float d = Vector3.Distance(vesselList[i].transform.position, part.vessel.transform.position);
+
+            if (GUILayout.Button((d / 1000).ToString("F1") + "km " + vesselList[i].vesselName, but,
+                                 GUILayout.ExpandWidth(true)))
+            {
+                Mode = UIMode.SELECTED;
+                _selectedVesselInstanceId = vesselList[i].GetInstanceID();
+                _selectedVesselIndex = FlightGlobals.Vessels.IndexOf(vesselList[i]);
+                core.setTarget(vesselList[i]);
+            }
+        }
+        break;
+    	}
+    	GUILayout.EndScrollView ();
+    
+
+    
     }
 
     private void RenderVesselsUI(GUIStyle sty,GUIStyle but)
@@ -283,6 +458,7 @@ namespace MuMech
                 Mode = UIMode.SELECTED;
                 _selectedVesselInstanceId = vesselList[i].GetInstanceID();
                 _selectedVesselIndex = FlightGlobals.Vessels.IndexOf(vesselList[i]);
+                core.setTarget(vesselList[i]);
             }
         }
 
@@ -291,16 +467,20 @@ namespace MuMech
 
     private void RenderSelectedUI(GUIStyle sty, GUIStyle but)
     {
-        if (!CheckVessel())
-        {
-            _flyByWire = false;
-            Mode = UIMode.VESSELS;
-        }
+	     if (core.targetType == MechJebCore.TargetType.VESSEL)
+	     {
+	        if (!CheckVessel())
+	        {
+	            _flyByWire = false;
+	            Mode = UIMode.TARGET_SELECTION;
+	        }
+		}
 
         if (GUILayout.Button((FlightGlobals.Vessels[_selectedVesselIndex].vesselName), but, GUILayout.ExpandWidth(true)))
         {
             _flyByWire = false;
-            Mode = UIMode.VESSELS;
+            Mode = UIMode.TARGET_SELECTION;
+            core.setTarget();
         }
         if (GUILayout.Button("Align Planes", but, GUILayout.ExpandWidth(true)))
         {
@@ -405,8 +585,8 @@ namespace MuMech
         for (int i = 0; i < 4; i++)
             GUILayout.Box(_syncString[i]);
 
-        GUILayout.Box("Closest Approach on Orbit " + _closestApproachOrbit.ToString(),sty);
-        GUILayout.Box("Min Separation (sec) : " + _minimumPredictedTimeFromTarget.ToString("f1"),sty);
+        GUILayout.Label("Closest Approach on Orbit " + _closestApproachOrbit.ToString(),sty);
+        GUILayout.Label("Min Separation (sec) : " + _minimumPredictedTimeFromTarget.ToString("f1"),sty);
 		
 		if (automation ==true){
         if(GUILayout.Button(_autoPhaser ? _autoPhaserState.ToString() : "Auto Sync", but, GUILayout.ExpandWidth(true)))

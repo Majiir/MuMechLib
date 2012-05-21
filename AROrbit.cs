@@ -264,7 +264,10 @@ namespace MuMech
                                             Vector3d.Dot(radialVector, unitTowardPeriapsis));
             if (!hyperbolic)
             {
-                double eccentricAnomaly = Math.Acos((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
+                double cosEccentricAnomaly = (eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly));
+                if (cosEccentricAnomaly > 1) cosEccentricAnomaly = 1;
+                if (cosEccentricAnomaly < -1) cosEccentricAnomaly = -1;
+                double eccentricAnomaly = Math.Acos(cosEccentricAnomaly);
                 if (double.IsNaN(eccentricAnomaly))
                 {
                     //debug("AROrbit constructor: elliptic eccentric anomaly is NaN!");
@@ -275,7 +278,9 @@ namespace MuMech
             }
             else
             {
-                double eccentricAnomaly = Acosh((eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly)));
+                double coshEccentricAnomaly = (eccentricity + Math.Cos(trueAnomaly)) / (1 + eccentricity * Math.Cos(trueAnomaly));
+                if(coshEccentricAnomaly < 1) coshEccentricAnomaly = 1;
+                double eccentricAnomaly = Acosh(coshEccentricAnomaly);
                 if (double.IsNaN(eccentricAnomaly))
                 {
                     //debug("AROrbit constructor: hyperbolic eccentric anomaly is NaN!");

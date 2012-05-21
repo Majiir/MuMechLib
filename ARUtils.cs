@@ -303,6 +303,21 @@ namespace MuMech
             }
         }
 
+
+        public static Orbit computeOrbit(Vessel vessel, Vector3d deltaV, double UT)
+        {
+            Orbit ret = new Orbit();
+            ret.UpdateFromStateVectors(vessel.findWorldCenterOfMass()-vessel.mainBody.position, vessel.orbit.GetVel() + deltaV, vessel.mainBody, UT);
+            return ret;
+        }
+
+        public static Orbit computeOrbit(Vector3d pos, Vector3d vel, CelestialBody body, double UT)
+        {
+            Orbit ret = new Orbit();
+            ret.UpdateFromStateVectors(pos - body.position, vel, body, UT);
+            return ret;
+        }
     }
+
 
 }

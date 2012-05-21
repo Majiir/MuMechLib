@@ -1,4 +1,5 @@
 using System;
+using UnityEngine;
 
 namespace OrbitExtensions
 {
@@ -410,5 +411,15 @@ namespace OrbitExtensions
 
             return ((a2 - (e1*e1))/(e2*-Math.Sin(x))) - ((a1 - (e2*e2))/(e1*-Math.Sin(x*rad)));
         }
+
+
+        //Orbit.getRelativePositionAtUT seems to be less precise, or something?
+        public static Vector3d getPositionAtTime(this Orbit orbit, double UT)
+        {
+            Vector3d pos = orbit.getRelativePositionAtUT(UT);
+            pos += orbit.referenceBody.position;
+            return pos;
+        }
+
     }
 }

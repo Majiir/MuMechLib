@@ -4,22 +4,21 @@ using System.Linq;
 using System.Text;
 using System.Diagnostics;
 using UnityEngine;
+using OrbitExtensions;
 
 /*
  * Todo:
  * 
+ * -replace uses of AROrbit with Orbit
+ * -Improve behavior landing from low orbits
+ * -put main simulation in a separate thread
+ * -display a target icon showing the landing target in the map view
+ * -Investigate claims of crashes
+ * -is land not turning off attitude control when it lands?
+ * 
  * Future:
- * -investigate and fix remaining failures of kepler solver to converge for high ecc orbits (managed to hang game activating land at target after a short hop up from munar surface)
- * -for mun landings, replace "predicted landing location" with "predicted impact site" when LAND-at-target isn't active     
  * -save coordinates by body
  * -fix remaining pole problems
- * -figure out exactly where the bottom of the ship is for more controlled landings
- * -put main simulation in a separate thread
- * -display a target icon showing the landed target in the map view
- * 
- * Changed:
- * 
- * -fixed bug where landing autopilot would not wait for deorbit burn point if it had deorbited before
  * 
  */
 
@@ -728,8 +727,8 @@ namespace MuMech
             double horizontalDV = orbitOper.deltaVToChangePeriapsis(-0.1 * part.vessel.mainBody.Radius);
             horizontalDV *= Math.Sign(-0.1 * part.vessel.mainBody.Radius - part.vessel.orbit.PeA);
             Vector3d currentHorizontal = Vector3d.Exclude(vesselState.up, vesselState.velocityVesselOrbit).normalized;
-            Vector3d forwardDeorbitVelocity = vesselState.velocityVesselOrbit + horizontalDV * currentHorizontal;
-            AROrbit forwardDeorbitTrajectory = new AROrbit(vesselState.CoM, forwardDeorbitVelocity, vesselState.time, part.vessel.mainBody);
+            //Vector3d forwardDeorbitVelocity = vesselState.velocityVesselOrbit + horizontalDV * currentHorizontal;
+            Orbit forwardDeorbitTrajectory = ARUtils.computeOrbit(part.vessel, horizontalDV * currentHorizontal, vesselState.time);
             double freefallTime = projectFreefallEndTime(forwardDeorbitTrajectory, vesselState.time) - vesselState.time;
             double planetRotationDuringFreefall = 360 * freefallTime / part.vessel.mainBody.rotationPeriod;
             Vector3d currentTargetRadialVector = part.vessel.mainBody.GetRelSurfacePosition(targetLatitude, targetLongitude, 0);
@@ -1135,11 +1134,11 @@ namespace MuMech
             {
                 if (prediction != null && prediction.outcome == LandingPrediction.Outcome.LANDED)
                 {
-                    return 100 + ARUtils.PQSSurfaceHeight(prediction.landingLatitude, prediction.landingLongitude, part.vessel.mainBody);
+                    return 500 + ARUtils.PQSSurfaceHeight(prediction.landingLatitude, prediction.landingLongitude, part.vessel.mainBody);
                 }
                 else
                 {
-                    return 100 + ARUtils.PQSSurfaceHeight(targetLatitude, targetLongitude, part.vessel.mainBody);
+                    return 500 + ARUtils.PQSSurfaceHeight(targetLatitude, targetLongitude, part.vessel.mainBody);
                 }
 
 
@@ -1350,7 +1349,7 @@ namespace MuMech
 
             //use the known orbit in vacuum to find the position and velocity when we first hit the atmosphere 
             //or start decelerating with thrust:
-            AROrbit freefallTrajectory = new AROrbit(startPos, startVel, startTime, part.vessel.mainBody);
+            Orbit freefallTrajectory = ARUtils.computeOrbit(startPos, startVel, part.vessel.mainBody, startTime);
             double initialT = projectFreefallEndTime(freefallTrajectory, startTime);
             //a hack to detect improperly initialized stuff and not try to do the simulation
             if (double.IsNaN(initialT))
@@ -1359,8 +1358,8 @@ namespace MuMech
                 return result;
             }
 
-            Vector3d pos = freefallTrajectory.positionAtTime(initialT);
-            Vector3d vel = freefallTrajectory.velocityAtTime(initialT);
+            Vector3d pos = freefallTrajectory.getPositionAtTime(initialT);
+            Vector3d vel = freefallTrajectory.getOrbitalVelocityAtUT(initialT);
             double initialAltitude = FlightGlobals.getAltitudeAtPos(pos);
             Vector3d initialPos = new Vector3d(pos.x, pos.y, pos.z);
             Vector3d initialVel = new Vector3d(vel.x, vel.y, vel.z); ;
@@ -1473,9 +1472,9 @@ namespace MuMech
         //In a landing, we are going to free fall some way and then either hit atmosphere or start
         //decelerating with thrust. Until that happens we can project the orbit forward along a conic section.
         //Given an orbit, this function figures out the time at which the free-fall phase will end
-        double projectFreefallEndTime(AROrbit offsetOrbit, double startTime)
+        double projectFreefallEndTime(Orbit offsetOrbit, double startTime)
         {
-            Vector3d currentPosition = offsetOrbit.positionAtTime(startTime);
+            Vector3d currentPosition = offsetOrbit.getPositionAtTime(startTime);
             double currentAltitude = FlightGlobals.getAltitudeAtPos(currentPosition);
 
             //check if we are already in the atmosphere or below the deceleration burn end altitude
@@ -1484,7 +1483,7 @@ namespace MuMech
                 return vesselState.time;
             }
 
-            Vector3d currentOrbitVelocity = offsetOrbit.velocityAtTime(startTime);
+            Vector3d currentOrbitVelocity = offsetOrbit.getOrbitalVelocityAtUT(startTime);
             Vector3d currentSurfaceVelocity = currentOrbitVelocity - part.vessel.mainBody.getRFrmVel(currentPosition);
 
             //check if we already should be decelerating or will be momentarily:
@@ -1496,8 +1495,8 @@ namespace MuMech
             }
 
             //check if the orbit reenters at all
-            double timeToPe = offsetOrbit.timeToPeriapsis(startTime);
-            Vector3d periapsisPosition = offsetOrbit.positionAtTime(startTime + timeToPe);
+            double timeToPe = offsetOrbit.timeToPe;
+            Vector3d periapsisPosition = offsetOrbit.getPositionAtTime(startTime + timeToPe);
             if (FlightGlobals.getAltitudeAtPos(periapsisPosition) > part.vessel.mainBody.maxAtmosphereAltitude)
             {
                 return startTime + timeToPe; //return the time of periapsis as a next best number
@@ -1509,9 +1508,9 @@ namespace MuMech
             while (maxReentryTime - minReentryTime > 1.0)
             {
                 double test = (maxReentryTime + minReentryTime) / 2.0;
-                Vector3d testPosition = offsetOrbit.positionAtTime(test);
+                Vector3d testPosition = offsetOrbit.getPositionAtTime(test);
                 double testAltitude = FlightGlobals.getAltitudeAtPos(testPosition);
-                Vector3d testOrbitVelocity = offsetOrbit.velocityAtTime(test);
+                Vector3d testOrbitVelocity = offsetOrbit.getOrbitalVelocityAtUT(test);
                 Vector3d testSurfaceVelocity = testOrbitVelocity - part.vessel.mainBody.getRFrmVel(testPosition);
                 double testSpeed = testSurfaceVelocity.magnitude;
 

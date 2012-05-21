@@ -22,7 +22,9 @@ namespace MuMech
             ORBIT_HORIZONTAL,  //forward = surface projection of orbit velocity, up = surface normal
             SURFACE_NORTH,     //forward = north, left = west, up = surface normal
             SURFACE_VELOCITY,  //forward = surface frame vessel velocity, up = perpendicular component of surface normal
-            TARGET             //forward = toward target, up = perpendicular component of vessel heading
+            TARGET,             //forward = toward target, up = perpendicular component of vessel heading
+            RELATIVE_VELOCITY, //forward = toward relative velocity direction, up = tbd
+            TARGET_ORIENTATION //forwad = direction target is facing, up = target up
         }
 
         public enum TargetType
@@ -89,7 +91,7 @@ namespace MuMech
         private static bool calibrationMode = false;
         private static int windowIDbase = 60606;
         private int calibrationTarget = 0;
-        private double[] calibrationDeltas = { 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500 };
+        private double[] calibrationDeltas = { 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000 };
         private int calibrationDelta = 0;
 
         public static SettingsManager settings = null;
@@ -118,7 +120,7 @@ namespace MuMech
         public float r_Kp = 0;
         public float r_Ki = 0;
         public float r_Kd = 0;
-        public float Damping = 0.0F;
+        public float Damping = 3.0F;
 
         public float trans_spd_act = 0;
         public float trans_prev_thrust = 0;
@@ -399,6 +401,7 @@ namespace MuMech
 
         public Quaternion attitudeGetReferenceRotation(AttitudeReference reference)
         {
+            Vector3d fwd;
             Quaternion rotRef = Quaternion.identity;
             switch (reference)
             {
@@ -415,15 +418,23 @@ namespace MuMech
                     rotRef = Quaternion.LookRotation(vesselState.velocityVesselSurfaceUnit, vesselState.up);
                     break;
                 case AttitudeReference.TARGET:
+                    fwd = (((targetType == TargetType.VESSEL) ? (Vector3d)targetVessel.transform.position : targetBody.position) - vesselState.CoM).normalized;
+                    rotRef = Quaternion.LookRotation(fwd, Vector3d.Cross(fwd, vesselState.leftOrbit));
+                    break;
+                case AttitudeReference.RELATIVE_VELOCITY:
+                    fwd = (vesselState.velocityVesselOrbit - ((targetType == TargetType.VESSEL) ? targetVessel.orbit.GetVel() : targetBody.orbit.GetVel())).normalized;
+                    rotRef = Quaternion.LookRotation(fwd, Vector3d.Cross(fwd, vesselState.leftOrbit));
+                    break;
+                case AttitudeReference.TARGET_ORIENTATION:
                     switch (targetType)
-                    {
+	                {
                         case TargetType.VESSEL:
-                            rotRef = Quaternion.LookRotation((targetVessel.findWorldCenterOfMass() - vesselState.CoM).normalized, -part.vessel.transform.forward);
+                            rotRef = Quaternion.LookRotation(targetVessel.transform.up, targetVessel.transform.right);
                             break;
                         case TargetType.BODY:
-                            rotRef = Quaternion.LookRotation((targetBody.position - vesselState.CoM).normalized, -part.vessel.transform.forward);
+                            rotRef = vesselState.rotationSurface;
                             break;
-                    }
+	                }
                     break;
             }
             return rotRef;
@@ -501,6 +512,10 @@ namespace MuMech
         {
             targetVessel = target;
             targetType = TargetType.VESSEL;
+        }
+        public void setTarget()
+        {
+            targetType = TargetType.NONE;
         }
 
         public void setTarget(CelestialBody target)
@@ -662,6 +677,8 @@ namespace MuMech
                 return;
             }
 
+            double int_error = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0;
+
             if ((tmode != TMode.OFF) && (vesselState.thrustAvailable > 0))
             {
                 double spd = 0;
@@ -762,8 +779,6 @@ namespace MuMech
                 double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
                 t_prev_err = t_err;
 
-                double int_error = attitudeActive?Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)):0;
-                //print("int_error = " + int_error);
                 if ((tmode != TMode.KEEP_VERTICAL) || !trans_kill_h || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 90)))
                 {
                     if (tmode == TMode.DIRECT)
@@ -791,8 +806,9 @@ namespace MuMech
             if (attitudeActive)
             {
                 int userCommanding = (Mathfx.Approx(s.pitch, 0, 0.1F) ? 0 : 1) + (Mathfx.Approx(s.yaw, 0, 0.1F) ? 0 : 2) + (Mathfx.Approx(s.roll, 0, 0.1F) ? 0 : 4);
+                double precision = Math.Max(0.5, Math.Min(10.0, (vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle) * 20.0 / vesselState.MoI.magnitude));
 
-                s.killRot = false;
+                s.killRot = (int_error < precision / 10.0);
 
                 Quaternion target = attitudeGetReferenceRotation(attitudeReference) * attitudeTarget;
                 Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * target);
@@ -804,8 +820,23 @@ namespace MuMech
                 Vector3d deltaEuler = delta.eulerAngles;
                 Vector3d err = new Vector3d((deltaEuler.x > 180) ? (deltaEuler.x - 360.0F) : deltaEuler.x, -((deltaEuler.y > 180) ? (deltaEuler.y - 360.0F) : deltaEuler.y), (deltaEuler.z > 180) ? (deltaEuler.z - 360.0F) : deltaEuler.z) * Math.PI / 180.0F;
                 Vector3d torque = new Vector3d(vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle, vesselState.torqueRAvailable, vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle);
-                Vector3d inertia = Vector3d.Scale(MuUtils.Sign(vesselState.angularMomentum) * 1.1, Vector3d.Scale(Vector3d.Scale(vesselState.angularMomentum, vesselState.angularMomentum), MuUtils.Invert(Vector3d.Scale(torque, vesselState.MoI))));
-                err += MuUtils.Reorder(inertia, 132);
+                if (int_error < Math.Min(0.1, precision / 10.0))
+                {
+                    Kp = Ki = Kd = 0;
+                }
+                else if (int_error < precision)
+                {
+                    Kp = 12;
+                    Ki = 0.001F;
+                    Kd = 30;
+                }
+                else
+                {
+                    Kp = 10000;
+                    Ki = Kd = 0;
+                    Vector3d inertia = Vector3d.Scale(MuUtils.Sign(vesselState.angularMomentum) * 1.1, Vector3d.Scale(Vector3d.Scale(vesselState.angularMomentum, vesselState.angularMomentum), MuUtils.Invert(Vector3d.Scale(torque, vesselState.MoI))));
+                    err += MuUtils.Reorder(inertia, 132);
+                }
                 err.Scale(Vector3d.Scale(vesselState.MoI, MuUtils.Invert(torque)));
 
                 integral += err * TimeWarp.fixedDeltaTime;

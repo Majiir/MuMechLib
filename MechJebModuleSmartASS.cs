@@ -10,7 +10,8 @@ namespace MuMech
     public class MechJebModuleSmartASS : ComputerModule
     {
         protected static string[] SASS_texts = { "KILL\nROT", "SURF", "PRO\nGRAD", "RETR\nGRAD", "NML\n+", "NML\n-", "RAD\n+", "RAD\n-" };
-
+        protected static string[] SASS_tgtvessel_texts = { "KILL\nROT", "SURF", "PRO\nGRAD", "RETR\nGRAD", "NML\n+", "NML\n-","RAD\n+",
+		 "RAD\n-","RVEL\n+","RVEL\n-","TGT\n+","TGT\n-","PAR\n+","PAR\n-"};
         public enum Mode
         {
             OFF,
@@ -22,9 +23,17 @@ namespace MuMech
             NORMAL_MINUS,
             RADIAL_PLUS,
             RADIAL_MINUS,
+            RELATIVE_PLUS,
+            RELATIVE_MINUS,
+            TARGET_PLUS,
+            TARGET_MINUS,
+            PARALLEL_PLUS,
+            PARALLEL_MINUS,
             AUTO
         }
 
+        private bool showHelpWindow = false;
+        private Vector2 helpScrollPosition;
         private bool mode_changed = false;
         private Mode prev_mode = Mode.OFF;
         private Mode _mode = Mode.OFF;
@@ -42,6 +51,18 @@ namespace MuMech
                     _mode = value;
                     mode_changed = true;
                 }
+            }
+        }
+        protected Rect _helpWindowPos;
+
+        Rect helpWindowPos
+        {
+            get { return _helpWindowPos; }
+            set
+            {
+                if (_helpWindowPos.x != value.x || _helpWindowPos.y != value.y)
+                    core.settingsChanged = true;
+                _helpWindowPos = value;
             }
         }
 
@@ -80,9 +101,13 @@ namespace MuMech
             base.onFlightStateLoad(parsedData);
         }
 
-        public override GUILayoutOption[] windowOptions()
+        public override void drawGUI(int baseWindowID)
         {
-            return new GUILayoutOption[] { GUILayout.Width(130) };
+            windowPos = GUILayout.Window(baseWindowID, windowPos, WindowGUI, getName(), GUILayout.Width(130));
+            if (showHelpWindow)
+            {
+                helpWindowPos = GUILayout.Window(baseWindowID + 1, helpWindowPos, HelpWindowGUI, getName() + " - Help", GUILayout.Width(400), GUILayout.Height(500));
+            }
         }
 
         protected override void WindowGUI(int windowID)
@@ -92,6 +117,9 @@ namespace MuMech
             sty.hover.textColor = sty.active.textColor = Color.yellow;
             sty.onNormal.textColor = sty.onFocused.textColor = sty.onHover.textColor = sty.onActive.textColor = Color.green;
             sty.padding = new RectOffset(8, 8, 8, 8);
+
+            GUIStyle help_sty = new GUIStyle(sty);
+            help_sty.padding = new RectOffset(2, 2, 2, 2);
 
             GUILayout.BeginVertical();
 
@@ -109,13 +137,18 @@ namespace MuMech
                     mode = Mode.OFF;
                 }
 
+                sty.padding = new RectOffset(8, 8, 2, 2);
+
+                GUILayout.BeginHorizontal();
                 if (GUILayout.Button("OFF", sty, GUILayout.ExpandWidth(true)))
                 {
                     mode = Mode.OFF;
                     windowPos = new Rect(windowPos.x, windowPos.y, 10, 10);
                 }
+                showHelpWindow = GUILayout.Toggle(showHelpWindow, "?", help_sty, GUILayout.Width(35));
+                GUILayout.EndHorizontal();
 
-                mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, SASS_texts, 2, sty) + 1;
+                mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, (core.targetType == MechJebCore.TargetType.NONE)?SASS_texts:SASS_tgtvessel_texts, 2, sty) + 1;
 
                 if (mode == Mode.SURFACE)
                 {
@@ -201,6 +234,33 @@ namespace MuMech
             base.WindowGUI(windowID);
         }
 
+        private void HelpWindowGUI(int windowID)
+        {
+            helpScrollPosition = GUILayout.BeginScrollView(helpScrollPosition);
+            GUILayout.Label(
+                "Smart A.S.S. will automatically hold a chosen heading\n\n" +
+                "----------Standard Modes----------\n\n" +
+                "KILL ROT : Stops Vessel Rotation\n" +
+                "SURF : Holds orientation at a specific heading and pitch\n" +
+                "PRO GRAD : Holds orientation at prograde (the direction the vessel is moving)\n" +
+                "RETR GRAD : Holds orientation at retrorograde (opposite of prograde)\n" +
+                "NML + : Holds orientation at orbit normal\n" +
+                "NML - : Holds orientation at orbit anti-normal\n" +
+                "RAD + : Holds orientation facing up from the orbited body\n" +
+                "RAD - : Holds orientation facing down toward the orbited body\n\n" +
+                "----------Target Modes----------\n\n" +
+                "Target Modes will only be displayed when a target vessel is selected\n" +
+                "RVEl + : Points in the direction to zero your velocity relative to the target vessel\n" +
+                "RVEL - : Points in the direction to zero your velocity relative to the target vessel\n" +
+                "TGT + : Points directly at the target vessel\n" +
+                "TGT - : Points directly away from the target vessel\n" +
+                "PAR + : Points parallel to the target vessel\n" +
+                "PAR - : Points parallel to the target vesssel (opposite direction)\n"
+            );
+            GUILayout.EndScrollView();
+
+            GUI.DragWindow();
+        }
         public override void onAttitudeChange(MechJebCore.AttitudeReference oldReference, Quaternion oldTarget, MechJebCore.AttitudeReference newReference, Quaternion newTarget)
         {
             if (!core.attitudeActive && ((mode != Mode.SURFACE) || srf_act))
@@ -252,6 +312,25 @@ namespace MuMech
                         case Mode.RADIAL_MINUS:
                             core.attitudeTo(Vector3d.down, MechJebCore.AttitudeReference.ORBIT, this);
                             break;
+                        case Mode.RELATIVE_PLUS:
+                            core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.RELATIVE_VELOCITY, this);
+                            break;
+                        case Mode.RELATIVE_MINUS:
+                            core.attitudeTo(Vector3d.back, MechJebCore.AttitudeReference.RELATIVE_VELOCITY, this);
+                            break;
+                        case Mode.TARGET_PLUS:
+                            core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.TARGET, this);
+                            break;
+                        case Mode.TARGET_MINUS:
+                            core.attitudeTo(Vector3d.back, MechJebCore.AttitudeReference.TARGET, this);
+                            break;
+                        case Mode.PARALLEL_PLUS:
+                            core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.TARGET_ORIENTATION, this);
+                            break;
+                        case Mode.PARALLEL_MINUS:
+                            core.attitudeTo(Vector3d.back, MechJebCore.AttitudeReference.TARGET_ORIENTATION, this);
+                            break;
+
                     }
                 }
                 else

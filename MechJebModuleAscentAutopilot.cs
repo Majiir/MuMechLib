@@ -8,13 +8,14 @@ using UnityEngine;
 /*
  * Todo:
  * 
+ * -Fix auto-staging (figure out how to detect when engines run out of fuel)
+ * -Enable launch-to-plane (auto-time and auto set inclination)
+ * -Investigate claim of missing apoapsis
+ * -reenable SOI change callback
+ * 
  * Future:
  * 
  * -add a roll input (may require improved attitude controller)
- * 
- * Changed:
- * 
- * -fixed failure of timed launch for rendezvous with targets above geosynchronous orbit
  * 
  */
 
@@ -1209,7 +1210,7 @@ namespace MuMech
                 GUILayout.EndHorizontal();
 
                 GUILayout.BeginHorizontal();
-                GUILayout.Label("Launch phase angle:°", GUILayout.ExpandWidth(true));
+                GUILayout.Label("Launch phase angle:", GUILayout.ExpandWidth(true));
                 GUILayout.Label("...");
                 GUILayout.EndHorizontal();
             }
@@ -1382,16 +1383,13 @@ namespace MuMech
         public override void onFlightStart()
         {
             updatePathTexture();
-            //TODO: Fix this
-            //part.vessel.orbit.OnReferenceBodyChange += new Orbit.CelestialBodyDelegate(this.handleReferenceBodyChange);
+            part.vessel.orbitDriver.OnReferenceBodyChange += new OrbitDriver.CelestialBodyDelegate(this.handleReferenceBodyChange);
         }
 
-        /*
         void handleReferenceBodyChange(CelestialBody body)
         {
             if (Staging.CurrentStage != Staging.StageCount) enabled = false; //if statement is needed or else this executes on restarting
         }
-        */
 
         public override void onFlightStartAtLaunchPad() //Called when vessel is placed on the launchpad
         {

@@ -8,15 +8,16 @@ using UnityEngine;
 /*
  * Todo:
  * 
+ * -handle inclination properly in TRANS
+ * -fix broken TMI
+ * -reenable SOI change callback
+ * 
  * Future:
  * 
  * -make small orbit adjustments more precise (redo throttle management?)
  * -make sure inclination is OK in TRANS
  * 
  * Changed:
- * 
- * -TRANS burns that miss the target won't hang the game
- * -PE and AP+PE will reject periapsis below -(planet radius)
  * 
  */
 
@@ -391,9 +392,19 @@ namespace MuMech
         {
             if (!part.vessel.isActiveVessel || !enabled) return;
 
-            if (transferTarget != null && transferTarget != part.vessel.mainBody && TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate)
+            if (transferTarget != null && transferTarget != part.vessel.mainBody)
             {
-                postTransferPeR = predictPostTransferPeriapsis(vesselState.CoM, vesselState.velocityVesselOrbit, vesselState.time, transferTarget);
+                if (part.vessel.orbit.closestEncounterBody != null
+                   && part.vessel.orbit.closestEncounterBody == transferTarget
+                   && part.vessel.orbit.ClAppr > 0
+                   && part.vessel.orbit.ClAppr < part.vessel.orbit.closestEncounterBody.sphereOfInfluence)
+                {
+                    postTransferPeR = part.vessel.orbit.nextPatch.PeR;
+                }
+                else
+                {
+                    postTransferPeR = -1;
+                }
             }
         }
 
@@ -680,19 +691,15 @@ namespace MuMech
             return throttle;
         }
 
-        /*
-         * TODO: Fix this
         public override void onFlightStart()
         {
-            part.vessel.orbit.OnReferenceBodyChange += new Orbit.CelestialBodyDelegate(this.handleReferenceBodyChange);
+            part.vessel.orbitDriver.OnReferenceBodyChange += new OrbitDriver.CelestialBodyDelegate(this.handleReferenceBodyChange);
         }
 
         public void handleReferenceBodyChange(CelestialBody newBody)
         {
             endOperation();
         }
-        */
-
 
         Vector3d circularizationVelocityCorrection()
         {
@@ -736,7 +743,7 @@ namespace MuMech
             if (newPeR > vesselState.radius || newPeR < 0) return 0.0;
 
             //are we raising or lowering the periapsis?
-            bool raising = (newPeR > new AROrbit(part.vessel).periapsis());
+            bool raising = (newPeR > part.vessel.orbit.PeR);
 
             Vector3d burnDirection = (raising ? 1 : -1) * chooseThrustDirectionToRaisePeriapsis();
 
@@ -746,8 +753,7 @@ namespace MuMech
             {
                 //put an upper bound on the required deltaV:
                 maxDeltaV = 0.25;
-                while (new AROrbit(vesselState.CoM, vesselState.velocityVesselOrbit + maxDeltaV * burnDirection,
-                    vesselState.time, part.vessel.mainBody).periapsis() < newPeR)
+                while (ARUtils.computeOrbit(part.vessel, maxDeltaV * burnDirection, vesselState.time).PeR < newPeR)
                 {
                     maxDeltaV *= 2;
                     if (maxDeltaV > 100000) break; //a safety precaution
@@ -764,8 +770,8 @@ namespace MuMech
             while (maxDeltaV - minDeltaV > 1.0)
             {
                 double testDeltaV = (maxDeltaV + minDeltaV) / 2.0;
-                double testPeriapsis = new AROrbit(vesselState.CoM, vesselState.velocityVesselOrbit + testDeltaV * burnDirection,
-                                                   vesselState.time, part.vessel.mainBody).periapsis();
+                double testPeriapsis = ARUtils.computeOrbit(part.vessel, testDeltaV * burnDirection, vesselState.time).PeR;
+
                 if ((testPeriapsis > newPeR && raising) || (testPeriapsis < newPeR && !raising))
                 {
                     maxDeltaV = testDeltaV;
@@ -787,7 +793,7 @@ namespace MuMech
             if (newApR < vesselState.radius) return 0.0;
 
             //are we raising or lowering the periapsis?
-            double initialAp = new AROrbit(part.vessel).apoapsis();
+            double initialAp = part.vessel.orbit.ApR;
             if (initialAp < 0) initialAp = double.MaxValue;
             bool raising = (newApR > initialAp);
 
@@ -805,8 +811,7 @@ namespace MuMech
                 while (ap < newApR)
                 {
                     maxDeltaV *= 2;
-                    ap = new AROrbit(vesselState.CoM, vesselState.velocityVesselOrbit + maxDeltaV * burnDirection,
-                                        vesselState.time, part.vessel.mainBody).apoapsis();
+                    ap = ARUtils.computeOrbit(part.vessel, maxDeltaV * burnDirection, vesselState.time).ApR;
                     if (ap < 0) ap = double.MaxValue;
                     if (maxDeltaV > 100000) break; //a safety precaution
                 }
@@ -821,8 +826,8 @@ namespace MuMech
             while (maxDeltaV - minDeltaV > 1.0)
             {
                 double testDeltaV = (maxDeltaV + minDeltaV) / 2.0;
-                double testApoapsis = new AROrbit(vesselState.CoM, vesselState.velocityVesselOrbit + testDeltaV * burnDirection,
-                                                   vesselState.time, part.vessel.mainBody).apoapsis();
+                double testApoapsis = ARUtils.computeOrbit(part.vessel, testDeltaV * burnDirection, vesselState.time).ApR;
+
                 if (testApoapsis < 0) testApoapsis = double.MaxValue;
                 if ((testApoapsis > newApR && raising) || (testApoapsis < newApR && !raising))
                 {
@@ -837,7 +842,7 @@ namespace MuMech
         }
 
 
-
+/*
         double predictPostTransferPeriapsis(Vector3d pos, Vector3d vel, double startTime, CelestialBody target)
         {
             AROrbit transferOrbit = new AROrbit(pos, vel, startTime, part.vessel.mainBody);
@@ -924,7 +929,7 @@ namespace MuMech
 
             double pe = (-GM + Math.Sqrt(Math.Abs(GM * GM + 2 * E * L * L))) / (2 * E);
             return pe;
-        }
+        }*/
 
 
         public override String getName()
