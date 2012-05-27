@@ -18,7 +18,7 @@ namespace MuMech
 		
         public override GUILayoutOption[] windowOptions()
         {
-        if (core.targetType == MechJebCore.TargetType.VESSEL)
+        if (core.targetType != MechJebCore.TargetType.NONE)
         {
         windowWidth=300;
         }
@@ -68,25 +68,28 @@ namespace MuMech
 				GUILayout.Label (MuUtils.ToSI (vesselState.orbitSemiMajorAxis) + "m");
 			GUILayout.EndVertical ();
 			
-			if (core.targetType == MechJebCore.TargetType.VESSEL) {
+			if (core.targetType != MechJebCore.TargetType.NONE)
+			{
 			GUILayout.BeginVertical ();
-				if (core.targetVessel.vesselName.Length>10)
-					GUILayout.Label (core.targetVessel.vesselName.Remove (10), GUILayout.ExpandWidth (true));
-				else
-					GUILayout.Label (core.targetVessel.vesselName, GUILayout.ExpandWidth (true));
-				GUILayout.Label (core.targetVessel.orbit.referenceBody.name);
-				GUILayout.Label (MuUtils.ToSI (core.targetVessel.orbit.GetVel().magnitude) + "m/s");
-				GUILayout.Label (MuUtils.ToSI (core.targetVessel.orbit.ApA) + "m");
-				GUILayout.Label (MuUtils.ToSI (core.targetVessel.orbit.PeA) + "m");
-				GUILayout.Label (MuUtils.ToSI (core.targetVessel.orbit.period) + "s");
-				GUILayout.Label (MuUtils.ToSI (core.targetVessel.orbit.timeToAp) + "s");
-				GUILayout.Label (MuUtils.ToSI (core.targetVessel.orbit.timeToPe) + "s");
-				GUILayout.Label (core.targetVessel.orbit.LAN.ToString ("F6") + "°");
-				GUILayout.Label (((core.targetVessel.orbit.LAN + core.targetVessel.orbit.argumentOfPeriapsis) % 360.0).ToString ("F6") + "°");
-				GUILayout.Label (core.targetVessel.orbit.inclination.ToString ("F6") + "°");
-				GUILayout.Label (core.targetVessel.orbit.eccentricity.ToString ("F6"));
-				GUILayout.Label (MuUtils.ToSI (core.targetVessel.orbit.semiMajorAxis) + "m");
-			GUILayout.EndVertical ();
+				if (core.targetName().Length>10)
+						GUILayout.Label (core.targetName ().Remove (10), GUILayout.ExpandWidth (true));
+					else
+						GUILayout.Label (core.targetName (), GUILayout.ExpandWidth (true));
+				
+					GUILayout.Label (core.targetOrbit().referenceBody.name);
+					GUILayout.Label (MuUtils.ToSI (core.targetOrbit ().GetVel().magnitude) + "m/s");
+					GUILayout.Label (MuUtils.ToSI (core.targetOrbit ().ApA) + "m");
+					GUILayout.Label (MuUtils.ToSI (core.targetOrbit ().PeA) + "m");
+					GUILayout.Label (MuUtils.ToSI (core.targetOrbit ().period) + "s");
+					GUILayout.Label (MuUtils.ToSI (core.targetOrbit ().timeToAp) + "s");
+					GUILayout.Label (MuUtils.ToSI (core.targetOrbit ().timeToPe) + "s");
+					GUILayout.Label (core.targetOrbit ().LAN.ToString ("F6") + "°");
+					GUILayout.Label (((core.targetOrbit ().LAN + core.targetVessel.orbit.argumentOfPeriapsis) % 360.0).ToString ("F6") + "°");
+					GUILayout.Label (core.targetOrbit ().inclination.ToString ("F6") + "°");
+					GUILayout.Label (core.targetOrbit ().eccentricity.ToString ("F6"));
+					GUILayout.Label (MuUtils.ToSI (core.targetOrbit ().semiMajorAxis) + "m");
+				GUILayout.EndVertical ();
+				
 			}
            
 		GUILayout.EndHorizontal();

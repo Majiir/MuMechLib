@@ -148,7 +148,7 @@ namespace MuMech
                 showHelpWindow = GUILayout.Toggle(showHelpWindow, "?", help_sty, GUILayout.Width(35));
                 GUILayout.EndHorizontal();
 
-                mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, (core.targetType == MechJebCore.TargetType.NONE)?SASS_texts:SASS_tgtvessel_texts, 2, sty) + 1;
+                mode = (Mode)GUILayout.SelectionGrid((int)mode - 1, (core.targetType == MechJebCore.TargetType.NONE) ? SASS_texts : SASS_tgtvessel_texts, 2, sty) + 1;
 
                 if (mode == Mode.SURFACE)
                 {
@@ -225,6 +225,8 @@ namespace MuMech
                     {
                         GUILayout.Label("Active HDG: " + srf_act_hdg.ToString("F1"), GUILayout.ExpandWidth(true));
                         GUILayout.Label("Active PIT: " + srf_act_pit.ToString("F1"), GUILayout.ExpandWidth(true));
+
+                        GUILayout.EndHorizontal();
                     }
                 }
             }
@@ -273,7 +275,7 @@ namespace MuMech
 
         public override void onPartUpdate()
         {
-            if (mode_changed)
+            if (mode_changed || core.targetChanged)
             {
                 windowPos = new Rect(windowPos.x, windowPos.y, 10, 10);
 

@@ -57,6 +57,12 @@ namespace MuMech
             return totalThrustOfActiveEngines(v, throttle) / totalMass(v);
         }
 
+        public static bool engineHasFuel(Part p)
+        {
+            //I don't really know the details of how you're supposed to use RequestFuel, but this seems to work to
+            //test whether something can get fuel.
+            return p.RequestFuel(p, 0, Part.getFuelReqId());
+        }
 
         public static bool hasIdleEngineDescendant(Part p)
         {
@@ -71,7 +77,8 @@ namespace MuMech
         //detect if a part is above an active or idle engine in the part tree
         public static bool hasActiveOrIdleEngineOrTankDescendant(Part p)
         {
-            if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine)) return true;
+            if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE) 
+                && (p is SolidRocket || (p is LiquidEngine && engineHasFuel(p)))) return true;
             if ((p is FuelTank) && ((FuelTank)p).fuel > 0) return true;
             foreach (Part child in p.children)
             {
@@ -84,6 +91,7 @@ namespace MuMech
         public static bool hasDeactivatedEngineOrTankDescendant(Part p)
         {
             if ((p.State == PartStates.DEACTIVATED) && (p is SolidRocket || p is LiquidEngine || p is FuelTank)) return true;
+            if (p is LiquidEngine && !engineHasFuel(p)) return true;
             foreach (Part child in p.children)
             {
                 if (hasDeactivatedEngineOrTankDescendant(child)) return true;
@@ -316,6 +324,11 @@ namespace MuMech
             Orbit ret = new Orbit();
             ret.UpdateFromStateVectors(pos - body.position, vel, body, UT);
             return ret;
+        }
+
+        public static void print(String s)
+        {
+            MonoBehaviour.print(s);
         }
     }
 

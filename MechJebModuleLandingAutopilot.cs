@@ -9,7 +9,6 @@ using OrbitExtensions;
 /*
  * Todo:
  * 
- * -replace uses of AROrbit with Orbit
  * -Improve behavior landing from low orbits
  * -put main simulation in a separate thread
  * -display a target icon showing the landing target in the map view
@@ -18,7 +17,6 @@ using OrbitExtensions;
  * 
  * Future:
  * -save coordinates by body
- * -fix remaining pole problems
  * 
  */
 
@@ -1358,11 +1356,11 @@ namespace MuMech
                 return result;
             }
 
-            Vector3d pos = freefallTrajectory.getPositionAtTime(initialT);
+            Vector3d pos = freefallTrajectory.getAbsolutePositionAtUT(initialT);
             Vector3d vel = freefallTrajectory.getOrbitalVelocityAtUT(initialT);
             double initialAltitude = FlightGlobals.getAltitudeAtPos(pos);
             Vector3d initialPos = new Vector3d(pos.x, pos.y, pos.z);
-            Vector3d initialVel = new Vector3d(vel.x, vel.y, vel.z); ;
+            Vector3d initialVel = new Vector3d(vel.x, vel.y, vel.z);
 
             double dragCoeffOverMass = vesselState.massDrag / vesselState.mass;
 
@@ -1474,7 +1472,7 @@ namespace MuMech
         //Given an orbit, this function figures out the time at which the free-fall phase will end
         double projectFreefallEndTime(Orbit offsetOrbit, double startTime)
         {
-            Vector3d currentPosition = offsetOrbit.getPositionAtTime(startTime);
+            Vector3d currentPosition = offsetOrbit.getAbsolutePositionAtUT(startTime);
             double currentAltitude = FlightGlobals.getAltitudeAtPos(currentPosition);
 
             //check if we are already in the atmosphere or below the deceleration burn end altitude
@@ -1496,7 +1494,7 @@ namespace MuMech
 
             //check if the orbit reenters at all
             double timeToPe = offsetOrbit.timeToPe;
-            Vector3d periapsisPosition = offsetOrbit.getPositionAtTime(startTime + timeToPe);
+            Vector3d periapsisPosition = offsetOrbit.getAbsolutePositionAtUT(startTime + timeToPe);
             if (FlightGlobals.getAltitudeAtPos(periapsisPosition) > part.vessel.mainBody.maxAtmosphereAltitude)
             {
                 return startTime + timeToPe; //return the time of periapsis as a next best number
@@ -1508,7 +1506,7 @@ namespace MuMech
             while (maxReentryTime - minReentryTime > 1.0)
             {
                 double test = (maxReentryTime + minReentryTime) / 2.0;
-                Vector3d testPosition = offsetOrbit.getPositionAtTime(test);
+                Vector3d testPosition = offsetOrbit.getAbsolutePositionAtUT(test);
                 double testAltitude = FlightGlobals.getAltitudeAtPos(testPosition);
                 Vector3d testOrbitVelocity = offsetOrbit.getOrbitalVelocityAtUT(test);
                 Vector3d testSurfaceVelocity = testOrbitVelocity - part.vessel.mainBody.getRFrmVel(testPosition);
@@ -1576,4 +1574,5 @@ namespace MuMech
             return new Vector2d(a * vec.x + b * vec.y, c * vec.x + d * vec.y);
         }
     }
+
 }

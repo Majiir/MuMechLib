@@ -8,10 +8,7 @@ using UnityEngine;
 /*
  * Todo:
  * 
- * -Fix auto-staging (figure out how to detect when engines run out of fuel)
  * -Enable launch-to-plane (auto-time and auto set inclination)
- * -Investigate claim of missing apoapsis
- * -reenable SOI change callback
  * 
  * Future:
  * 
@@ -1385,11 +1382,13 @@ namespace MuMech
             updatePathTexture();
             part.vessel.orbitDriver.OnReferenceBodyChange += new OrbitDriver.CelestialBodyDelegate(this.handleReferenceBodyChange);
         }
-
+        
+        
         void handleReferenceBodyChange(CelestialBody body)
         {
             if (Staging.CurrentStage != Staging.StageCount) enabled = false; //if statement is needed or else this executes on restarting
         }
+        
 
         public override void onFlightStartAtLaunchPad() //Called when vessel is placed on the launchpad
         {

@@ -4,20 +4,16 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
-
+using OrbitExtensions;
 /*
  * Todo:
  * 
  * -handle inclination properly in TRANS
- * -fix broken TMI
- * -reenable SOI change callback
- * 
- * Future:
- * 
  * -make small orbit adjustments more precise (redo throttle management?)
- * -make sure inclination is OK in TRANS
  * 
  * Changed:
+ * 
+ * -Reenabled SOI change callback (Fixed warp to SOI?)
  * 
  */
 
@@ -64,8 +60,10 @@ namespace MuMech
         bool raisingApsis;
 
         CelestialBody transferTarget;
-        bool startedTransferInjectionBurn = false;
-        double postTransferPeR;
+
+        enum TRANSState { WAITING_FOR_INJECTION, INJECTING, WAITING_FOR_CORRECTION, LOWERING_PERIAPSIS };
+        String[] transStateStrings = new String[] { "Moving to injection burn point", "Executing main injection burn", "Moving to mid-course correction", "Lowering final periapsis" };
+        TRANSState transState;
 
         String newPeAString = "100";
         double _newPeA = 100000.0;
@@ -257,6 +255,7 @@ namespace MuMech
                         desiredPostTransferPeA = ARUtils.doGUITextInput("Desired final periapsis:", 250.0F, desiredPostTransferPeAString, 50.0F, "km", 30.0F,
                                                                         out desiredPostTransferPeAString, desiredPostTransferPeA, 1000.0);
 
+                        double postTransferPeR = getPredictedPostTransferPeR();
                         if (transferTarget != null && postTransferPeR != -1)
                         {
                             GUILayout.Label(String.Format("Predicted periapsis after transfer to " + transferTarget.name + ": {0:0} km", (postTransferPeR - transferTarget.Radius) / 1000.0));
@@ -268,7 +267,7 @@ namespace MuMech
                             {
                                 core.controlClaim(this);
                                 currentOperation = Operation.TRANSFER_INJECTION;
-                                startedTransferInjectionBurn = false;
+                                transState = TRANSState.WAITING_FOR_INJECTION;
                                 transferTarget = body;
                             }
                         }
@@ -330,8 +329,7 @@ namespace MuMech
                     break;
 
                 case Operation.TRANSFER_INJECTION:
-                    if (startedTransferInjectionBurn) statusString = "Injecting into transfer orbit to " + transferTarget.name;
-                    else statusString = "Waiting for injection burn point for transfer to " + transferTarget.name;
+                    statusString = "Transferring to " + transferTarget.name + "\n" + transStateStrings[(int)transState];
                     break;
 
                 case Operation.WARP:
@@ -387,24 +385,25 @@ namespace MuMech
             GUI.DragWindow();
         }
 
-
-        public override void onPartFixedUpdate()
+        bool isSOISwitchPredicted()
         {
-            if (!part.vessel.isActiveVessel || !enabled) return;
+            return part.vessel.orbit.closestEncounterBody != null
+                && part.vessel.orbit.closestEncounterBody == transferTarget
+                && part.vessel.orbit.ClAppr > 0
+                && part.vessel.orbit.ClAppr < part.vessel.orbit.closestEncounterBody.sphereOfInfluence;
+        }
 
-            if (transferTarget != null && transferTarget != part.vessel.mainBody)
+        double getPredictedPostTransferPeR()
+        {
+            if (transferTarget != null
+                && transferTarget != part.vessel.mainBody
+                && isSOISwitchPredicted())
             {
-                if (part.vessel.orbit.closestEncounterBody != null
-                   && part.vessel.orbit.closestEncounterBody == transferTarget
-                   && part.vessel.orbit.ClAppr > 0
-                   && part.vessel.orbit.ClAppr < part.vessel.orbit.closestEncounterBody.sphereOfInfluence)
-                {
-                    postTransferPeR = part.vessel.orbit.nextPatch.PeR;
-                }
-                else
-                {
-                    postTransferPeR = -1;
-                }
+                return part.vessel.orbit.nextPatch.PeR;
+            }
+            else
+            {
+                return -1;
             }
         }
 
@@ -431,7 +430,7 @@ namespace MuMech
                     break;
 
                 case Operation.TRANSFER_INJECTION:
-                    driveTransferInjection(s);
+                    driveTransfer(s);
                     break;
 
                 case Operation.WARP:
@@ -558,8 +557,29 @@ namespace MuMech
             }
         }
 
+        void driveTransfer(FlightCtrlState s)
+        {
+            switch (transState)
+            {
+                case TRANSState.WAITING_FOR_INJECTION:
+                    driveTransferWaitingForInjection(s);
+                    break;
 
-        void driveTransferInjection(FlightCtrlState s)
+                case TRANSState.INJECTING:
+                    driveTransferInjection(s);
+                    break;
+
+                case TRANSState.WAITING_FOR_CORRECTION:
+                    driveTransferWaitingForCorrection(s);
+                    break;
+
+                case TRANSState.LOWERING_PERIAPSIS:
+                    driveTransferLoweringPeriapsis(s);
+                    break;
+            }
+        }
+
+        void driveTransferWaitingForInjection(FlightCtrlState s)
         {
             if (transferTarget == null || part.vessel.orbit.eccentricity > 1.0)
             {
@@ -567,59 +587,149 @@ namespace MuMech
                 return;
             }
 
-            if (!startedTransferInjectionBurn)
+            double transferSemiMajorAxis = (vesselState.radius + transferTarget.orbit.PeR) / 2.0;
+            double transferHalfPeriod = 0.5 * 2 * Math.PI / Math.Sqrt(ARUtils.G * part.vessel.mainBody.Mass) * Math.Pow(transferSemiMajorAxis, 1.5);
+
+            Orbit targetOrbit = ARUtils.computeOrbit(transferTarget.position, transferTarget.orbit.GetVel(), part.vessel.mainBody, vesselState.time);
+            Vector3d targetArrivalPosition = targetOrbit.getAbsolutePositionAtUT(vesselState.time + transferHalfPeriod);
+
+            Vector3d vesselArrivalPosition = part.vessel.mainBody.position - transferTarget.orbit.PeR * vesselState.up;
+            Vector3d targetPlaneNormal = Vector3d.Cross(transferTarget.position - part.vessel.mainBody.position, transferTarget.orbit.GetVel());
+            Vector3d vesselArrivalPositionTargetPlane = part.vessel.mainBody.position + Vector3d.Exclude(targetPlaneNormal, vesselArrivalPosition - part.vessel.mainBody.position);
+
+            double angleOffset = Math.Abs(Vector3d.Angle(targetArrivalPosition - part.vessel.mainBody.position,
+                                                         vesselArrivalPositionTargetPlane - part.vessel.mainBody.position));
+
+            if (Math.Abs(angleOffset) < 1)
             {
-                double transferSemiMajorAxis = (vesselState.radius + transferTarget.orbit.PeR) / 2.0;
-                double transferHalfPeriod = 0.5 * 2 * Math.PI / Math.Sqrt(ARUtils.G * part.vessel.mainBody.Mass) * Math.Pow(transferSemiMajorAxis, 1.5);
-                double targetTimeSincePe = transferTarget.orbit.period - transferTarget.orbit.timeToPe;
-                double targetArrivalTimeSincePe = targetTimeSincePe + transferHalfPeriod;
-                Vector3d targetArrivalPosition = transferTarget.orbit.getPositionAtT(targetArrivalTimeSincePe);
-                Vector3d vesselArrivalPosition = part.vessel.mainBody.position - transferTarget.orbit.PeR * vesselState.up;
-                Vector3d targetPlaneNormal = Vector3d.Cross(transferTarget.position - part.vessel.mainBody.position, transferTarget.orbit.GetVel());
-                Vector3d vesselArrivalPositionTargetPlane = part.vessel.mainBody.position + Vector3d.Exclude(targetPlaneNormal - part.vessel.mainBody.position, vesselArrivalPosition);
-
-                double angleOffset = Math.Abs(Vector3d.Angle(targetArrivalPosition - part.vessel.mainBody.position,
-                                                             vesselArrivalPositionTargetPlane - part.vessel.mainBody.position));
-                double timeOffset = angleOffset / 360 * part.vessel.orbit.period;
-                if (Math.Abs(angleOffset) < 1)
-                {
-                    startedTransferInjectionBurn = true;
-                    if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
-                }
-                else
-                {
-                    core.warpTo(this, timeOffset - 30, warpLookaheadTimes);
-                }
-
-
-                core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
-
-                //don't burn:
-                s.mainThrottle = 0.0F;
-                return;
+                transState = TRANSState.INJECTING;
+                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
             }
             else
             {
-                core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
+                double timeOffset = angleOffset / 360 * part.vessel.orbit.period;
+                core.warpTo(this, timeOffset - 30, warpLookaheadTimes);
+            }
 
-                double managedValue = postTransferPeR;
-                double targetValue = desiredPostTransferPeA + transferTarget.Radius;
+            core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
 
-                if (managedValue > 0 && managedValue < targetValue)
+            //don't burn:
+            s.mainThrottle = 0.0F;
+        }
+
+        void driveTransferInjection(FlightCtrlState s)
+        {
+            if (part.vessel.orbit.eccentricity > 1)
+            {
+                endOperation();
+                return;
+            }
+
+            if (getPredictedPostTransferPeR() != -1 && part.vessel.orbit.relativeInclination(transferTarget.orbit) < 1)
+            {
+                transState = TRANSState.LOWERING_PERIAPSIS;
+                return;
+            }
+
+            if(part.vessel.orbit.ApR > transferTarget.orbit.PeR) 
+            {
+                transState = TRANSState.WAITING_FOR_CORRECTION;
+                return;
+            }
+
+            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+
+            core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
+
+            if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = 1.0F;
+            else s.mainThrottle = 0.0F;
+        }
+
+        void driveTransferWaitingForCorrection(FlightCtrlState s) {
+            if(vesselState.radius < 0.5 * transferTarget.orbit.PeR) 
+            {
+                core.warpIncrease(this, false);
+            }
+            else 
+            {
+                core.warpMinimum(this, false);
+                transState = TRANSState.LOWERING_PERIAPSIS;
+            }
+
+            s.mainThrottle = 0.0F;
+        }
+
+        void driveTransferLoweringPeriapsis(FlightCtrlState s)
+        {
+            double postTransferPeR = getPredictedPostTransferPeR();
+            if (postTransferPeR != -1 && postTransferPeR < desiredPostTransferPeA + transferTarget.Radius)
+            {
+                endOperation();
+                return;
+            }
+
+            Orbit targetOrbit = ARUtils.computeOrbit(transferTarget.position, transferTarget.orbit.GetVel(), part.vessel.mainBody, vesselState.time);
+
+            double orbitIntersectionTime;
+            if (part.vessel.orbit.PeR < transferTarget.orbit.PeR)
+            {
+                orbitIntersectionTime = vesselState.time + part.vessel.orbit.timeToAp;
+            }
+            else
+            {
+                orbitIntersectionTime = part.vessel.orbit.GetUTforTrueAnomaly(part.vessel.orbit.TrueAnomalyAtRadius(transferTarget.orbit.PeR), 0);
+            }
+
+            Vector3d vesselIntersectionPosition = ARUtils.computeOrbit(part.vessel, Vector3d.zero, vesselState.time).getAbsolutePositionAtUT(orbitIntersectionTime);
+            Vector3d targetIntersectionPosition = targetOrbit.getAbsolutePositionAtUT(orbitIntersectionTime);
+            Vector3d intersectionSeparation = targetIntersectionPosition - vesselIntersectionPosition;
+
+            Vector3d[] burnDirections = new Vector3d[] { vesselState.velocityVesselOrbitUnit, vesselState.leftOrbit, vesselState.upNormalToVelOrbit };
+            double[] separationReductions = new double[3];
+
+            double perturbationDeltaV = 0.5;
+            for (int i = 0; i < 3; i++)
+            {
+                Orbit perturbedOrbit = ARUtils.computeOrbit(part.vessel, perturbationDeltaV * burnDirections[i], vesselState.time);
+
+                double perturbedIntersectionTime;
+                if (perturbedOrbit.PeR < transferTarget.orbit.PeR)
                 {
-                    endOperation();
+                    perturbedIntersectionTime = vesselState.time + perturbedOrbit.timeToAp;
                 }
                 else
                 {
-                    if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
-
-                    if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = manageThrottle(managedValue, targetValue, 0.01F);
-                    else s.mainThrottle = 0.0F;
+                    perturbedIntersectionTime = perturbedOrbit.GetUTforTrueAnomaly(perturbedOrbit.TrueAnomalyAtRadius(transferTarget.orbit.PeR), 0);
                 }
+                Vector3d perturbedVesselIntersectionPosition = perturbedOrbit.getAbsolutePositionAtUT(perturbedIntersectionTime);
+                Vector3d perturbedTargetIntersectionPosition = targetOrbit.getAbsolutePositionAtUT(perturbedIntersectionTime);
+                Vector3d perturbedIntersectionSeparation = perturbedTargetIntersectionPosition - perturbedVesselIntersectionPosition;
+
+                separationReductions[i] = (intersectionSeparation.magnitude - perturbedIntersectionSeparation.magnitude) / perturbationDeltaV;
             }
 
 
+            double gradientMagnitude = Math.Sqrt(Math.Pow(separationReductions[0], 2) + Math.Pow(separationReductions[1], 2) + Math.Pow(separationReductions[2], 2));
+
+            double desiredDeltaV = intersectionSeparation.magnitude / gradientMagnitude;
+            Vector3d desiredBurnDirection = (separationReductions[0] * burnDirections[0] 
+                + separationReductions[1] * burnDirections[1] 
+                + separationReductions[2] * burnDirections[2]).normalized; 
+
+            core.attitudeTo(desiredBurnDirection, MechJebCore.AttitudeReference.INERTIAL, this);
+
+            if (core.attitudeAngleFromTarget() < 5)
+            {
+                if (postTransferPeR == -1) s.mainThrottle = 1.0F;
+                else s.mainThrottle = manageThrottle(postTransferPeR, desiredPostTransferPeA + transferTarget.Radius, 0.01F);
+            }
+            else
+            {
+                s.mainThrottle = 0.0F;
+            }
         }
+
+
 
         void driveWarp(FlightCtrlState s)
         {
@@ -633,7 +743,6 @@ namespace MuMech
             else
             {
                 //warp to periapsis or apoapsis
-
                 double timeToTarget;
                 double timeSinceTarget;
                 if (warpPoint == WarpPoint.APOAPSIS)
@@ -650,13 +759,21 @@ namespace MuMech
                 else
                 {
                     double timeToPe = part.vessel.orbit.timeToPe;
-                    if (part.vessel.orbit.eccentricity > 1)
+/*                    if (part.vessel.orbit.eccentricity > 1)
                     {
                         timeToPe = -part.vessel.orbit.meanAnomaly / (2 * Math.PI / part.vessel.orbit.period);
+                    }*/
+
+                    if (part.vessel.orbit.eccentricity < 1)
+                    {
+                        timeToTarget = (timeToPe - warpTimeOffset + part.vessel.orbit.period) % part.vessel.orbit.period;
+                        timeSinceTarget = (2 * part.vessel.orbit.period - timeToPe + warpTimeOffset) % part.vessel.orbit.period;
                     }
-                    timeToTarget = (timeToPe - warpTimeOffset + part.vessel.orbit.period) % part.vessel.orbit.period;
-                    timeSinceTarget = (2 * part.vessel.orbit.period - timeToPe + warpTimeOffset) % part.vessel.orbit.period;
-                    if (part.vessel.orbit.eccentricity > 1) timeSinceTarget = 1.0e30;
+                    else
+                    {
+                        timeToTarget = timeToPe;
+                        timeSinceTarget = 1.0e30;
+                    }
                 }
 
                 if (timeToTarget < 1.0 || timeSinceTarget < 10.0) endOperation();
@@ -691,6 +808,7 @@ namespace MuMech
             return throttle;
         }
 
+
         public override void onFlightStart()
         {
             part.vessel.orbitDriver.OnReferenceBodyChange += new OrbitDriver.CelestialBodyDelegate(this.handleReferenceBodyChange);
@@ -700,6 +818,7 @@ namespace MuMech
         {
             endOperation();
         }
+
 
         Vector3d circularizationVelocityCorrection()
         {
@@ -841,97 +960,6 @@ namespace MuMech
             return (maxDeltaV + minDeltaV) / 2;
         }
 
-
-/*
-        double predictPostTransferPeriapsis(Vector3d pos, Vector3d vel, double startTime, CelestialBody target)
-        {
-            AROrbit transferOrbit = new AROrbit(pos, vel, startTime, part.vessel.mainBody);
-            AROrbit targetOrbit = new AROrbit(target.position, target.orbit.GetVel(), vesselState.time, target.orbit.referenceBody);
-
-            double soiSwitchTime = predictSOISwitchTime(transferOrbit, target, startTime);
-            if (soiSwitchTime == -1) return -1;
-
-            Vector3d transferPos = transferOrbit.positionAtTime(soiSwitchTime);
-            Vector3d targetPos = targetOrbit.positionAtTime(soiSwitchTime);
-            Vector3d relativePos = transferPos - targetPos;
-            Vector3d transferVel = transferOrbit.velocityAtTime(soiSwitchTime);
-            Vector3d targetVel = targetOrbit.velocityAtTime(soiSwitchTime);
-            Vector3d relativeVel = transferVel - targetVel;
-            double pe = computePeriapsis(relativePos, relativeVel, target);
-
-            return pe;
-        }
-
-        double predictSOISwitchTime(AROrbit transferOrbit, CelestialBody target, double startTime)
-        {
-            if (transferOrbit.hyperbolic) return -1; //hyperbolic orbits not supported
-
-            AROrbit targetOrbit = new AROrbit(target.position, target.orbit.GetVel(), vesselState.time, target.orbit.referenceBody);
-            double minSwitchTime = startTime;
-            double maxSwitchTime = 0;
-
-            double t = startTime;
-
-            while(true)
-            {
-                Vector3d transferPos = transferOrbit.positionAtTime(t);
-                Vector3d targetPos = targetOrbit.positionAtTime(t);
-                if ((transferPos - targetPos).magnitude < target.sphereOfInfluence)
-                {
-                    maxSwitchTime = t;
-                    break;
-                }
-                else
-                {
-                    minSwitchTime = t;
-                }
-
-                //advance time by a safe amount (so that we don't completely skip the SOI intersection)
-                Vector3d transferVel = transferOrbit.velocityAtTime(t);
-                Vector3d targetVel = targetOrbit.velocityAtTime(t);
-                Vector3d relativeVel = transferVel - targetVel;
-                t += 0.1 * target.sphereOfInfluence / relativeVel.magnitude;
-
-                if(t > startTime + transferOrbit.period) break;
-
-                //guard against taking infinitely long on hyperbolic or very elliptical orbits:
-                double maxTargetSOIRadius = (target.position - part.vessel.mainBody.position).magnitude + target.sphereOfInfluence;
-                if((transferPos - part.vessel.mainBody.position).magnitude > 2 * maxTargetSOIRadius) break;
-            }
-
-            if (maxSwitchTime == 0)
-            {
-                return -1; //didn't intersect target's SOI
-            }
-
-            //do a binary search for the SOI entrance time:
-            while (maxSwitchTime - minSwitchTime > 1.0)
-            {
-                double testTime = (minSwitchTime + maxSwitchTime) / 2.0;
-                Vector3d transferPos = transferOrbit.positionAtTime(testTime);
-                Vector3d targetPos = targetOrbit.positionAtTime(testTime);
-
-                if ((transferPos - targetPos).magnitude < target.sphereOfInfluence) maxSwitchTime = testTime;
-                else minSwitchTime = testTime;
-            }
-
-            return (maxSwitchTime + minSwitchTime) / 2.0;
-        }
-
-
-        double computePeriapsis(Vector3d relativePos, Vector3d relativeVel, CelestialBody body)
-        {
-            double radius = relativePos.magnitude;
-            double horizontalSpeed = Vector3d.Exclude(relativePos, relativeVel).magnitude;
-            double GM = ARUtils.G * body.Mass;
-            double E = 0.5 * relativeVel.sqrMagnitude - GM / radius;
-            double L = radius * horizontalSpeed;
-
-            double pe = (-GM + Math.Sqrt(Math.Abs(GM * GM + 2 * E * L * L))) / (2 * E);
-            return pe;
-        }*/
-
-
         public override String getName()
         {
             return "Orbital operations";
@@ -939,5 +967,56 @@ namespace MuMech
     }
 
 
+    public class Matrix3x3
+    {
+        double[, ] m = new double[3, 3];
+
+        //  [a    b]
+        //  [      ]
+        //  [c    d]
+
+        public Matrix3x3() {}
+
+        public Matrix3x3(Vector3d v1, Vector3d v2, Vector3d v3)
+        {
+            m[0, 0] = v1.x;
+            m[1, 0] = v1.y;
+            m[2, 0] = v1.z;
+            m[0, 1] = v2.x;
+            m[1, 1] = v2.y;
+            m[2, 1] = v2.z;
+            m[0, 2] = v3.x;
+            m[1, 2] = v3.y;
+            m[2, 2] = v3.z;
+        }
+
+        public Matrix3x3 inverse()
+        {
+            double det = m[0, 0] * m[1, 1] * m[2, 2] + m[0, 1] * m[1, 2] * m[2, 0] + m[0, 2] * m[1, 0] * m[2, 1]
+                       - m[0, 0] * m[1, 2] * m[2, 1] - m[0, 1] * m[1, 0] * m[2, 2] - m[0, 2] * m[1, 1] * m[2, 0];
+
+            Matrix3x3 ret = new Matrix3x3();
+
+            for(int r = 0; r < 3; r++) {
+                for(int c = 0; c < 3; c++) {
+                    int mr1 = (r == 0 ? 1 : 0);
+                    int mr2 = (r == 2 ? 1 : 2);
+                    int mc1 = (c == 0 ? 1 : 0);
+                    int mc2 = (c == 2 ? 1 : 2);
+
+                    ret.m[r, c] = 1/det * (m[mr1, mc1] * m[mr2, mc2] - m[mr2, mc1] * m[mr1, mc2]);
+                }
+            }
+
+            return ret;
+        }
+
+        public Vector3d times(Vector3d v)
+        {
+            return new Vector3d(m[0, 0] * v.x + m[0, 1] * v.y + m[0, 2] * v.z,
+                m[1, 0] * v.x + m[1, 1] * v.y + m[1, 2] * v.z,
+                m[2, 0] * v.x + m[2, 1] * v.y + m[2, 2] * v.z);
+        }
+    }
 
 }

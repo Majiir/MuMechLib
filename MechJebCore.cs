@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using MuMech;
+using System.Reflection;
 
 namespace MuMech
 {
@@ -195,7 +196,7 @@ namespace MuMech
             }
         }
 
-        protected bool targetChanged = false;
+        public bool targetChanged = false;
         protected TargetType _targetType = TargetType.NONE;
         public TargetType targetType
         {
@@ -293,6 +294,8 @@ namespace MuMech
                 }
             }
         }
+
+        public string version = "";
 
         public void saveSettings()
         {
@@ -507,7 +510,23 @@ namespace MuMech
         {
             return Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward));
         }
-
+		public float distanceFromTarget()
+		{
+			return Vector3.Distance(((targetType == TargetType.VESSEL) ? (Vector3d)targetVessel.transform.position : targetBody.position),part.vessel.transform.position);
+		}
+		public Orbit targetOrbit()
+		{
+		return targetType == TargetType.VESSEL ? targetVessel.orbit : targetBody.orbit;
+		}
+		public Vector3d relativeVelocityToTarget()
+		{
+			return (vesselState.velocityVesselOrbit - ((targetType == TargetType.VESSEL) ? targetVessel.orbit.GetVel () : targetBody.orbit.GetVel ()));
+		}
+		public string targetName()
+		{
+			return targetType==TargetType.VESSEL ? targetVessel.vesselName : targetBody.name;
+		}
+		
         public void setTarget(Vessel target)
         {
             targetVessel = target;
@@ -808,8 +827,6 @@ namespace MuMech
                 int userCommanding = (Mathfx.Approx(s.pitch, 0, 0.1F) ? 0 : 1) + (Mathfx.Approx(s.yaw, 0, 0.1F) ? 0 : 2) + (Mathfx.Approx(s.roll, 0, 0.1F) ? 0 : 4);
                 double precision = Math.Max(0.5, Math.Min(10.0, (vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle) * 20.0 / vesselState.MoI.magnitude));
 
-                s.killRot = (int_error < precision / 10.0);
-
                 Quaternion target = attitudeGetReferenceRotation(attitudeReference) * attitudeTarget;
                 Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * target);
                 /*
@@ -817,14 +834,14 @@ namespace MuMech
                     delta = Quaternion.Slerp(Quaternion.identity, delta, 0.1F);
                 }
                 */
-                Vector3d deltaEuler = delta.eulerAngles;
-                Vector3d err = new Vector3d((deltaEuler.x > 180) ? (deltaEuler.x - 360.0F) : deltaEuler.x, -((deltaEuler.y > 180) ? (deltaEuler.y - 360.0F) : deltaEuler.y), (deltaEuler.z > 180) ? (deltaEuler.z - 360.0F) : deltaEuler.z) * Math.PI / 180.0F;
+                Vector3d deltaEuler = new Vector3d((delta.eulerAngles.x > 180) ? (delta.eulerAngles.x - 360.0F) : delta.eulerAngles.x, -((delta.eulerAngles.y > 180) ? (delta.eulerAngles.y - 360.0F) : delta.eulerAngles.y), (delta.eulerAngles.z > 180) ? (delta.eulerAngles.z - 360.0F) : delta.eulerAngles.z);
+                Vector3d err = deltaEuler * Math.PI / 180.0F;
                 Vector3d torque = new Vector3d(vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle, vesselState.torqueRAvailable, vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle);
-                if (int_error < Math.Min(0.1, precision / 10.0))
+                if ((int_error < Math.Min(0.1, precision / 10.0)) && (Math.Abs(deltaEuler.y) < Math.Min(0.5, precision / 2.0)))
                 {
                     Kp = Ki = Kd = 0;
                 }
-                else if (int_error < precision)
+                else if ((int_error < precision) && (Math.Abs(deltaEuler.y) < precision * 5.0))
                 {
                     Kp = 12;
                     Ki = 0.001F;
@@ -850,6 +867,10 @@ namespace MuMech
                     {
                         attitudeTo(Quaternion.LookRotation(part.vessel.transform.up, -part.vessel.transform.forward), AttitudeReference.INERTIAL, null);
                     }
+                }
+                else
+                {
+                    s.killRot = (int_error < precision / 10.0) && (Math.Abs(deltaEuler.y) < Math.Min(0.5, precision / 2.0));
                 }
                 if ((userCommanding & 4) > 0)
                 {
@@ -902,6 +923,10 @@ namespace MuMech
                 }
             }
 
+            if (GUILayout.Button("Online Manual"))
+            {
+                Application.OpenURL("http://wiki.mechjeb.com/index.php?title=Manual");
+            }
             GUILayout.EndVertical();
         }
 
@@ -955,7 +980,7 @@ namespace MuMech
 
                 if (main_windowStat != WindowStat.HIDDEN)
                 {
-                    GUILayout.Window(windowIDbase, new Rect(Screen.width - main_windowProgr * 200, (Screen.height - 200) / 2, 200, 200), main_WindowGUI, "MechJeb", GUILayout.Width(200), GUILayout.Height(200));
+                    GUILayout.Window(windowIDbase, new Rect(Screen.width - main_windowProgr * 200, (Screen.height - 200) / 2, 200, 200), main_WindowGUI, "MechJeb " + version, GUILayout.Width(200), GUILayout.Height(200));
                 }
 
                 GUI.depth = -98;
@@ -982,6 +1007,10 @@ namespace MuMech
         {
             vesselState = new VesselState();
 
+            Version v = Assembly.GetAssembly(typeof(MechJebCore)).GetName().Version;
+
+            version = v.Major.ToString() + "." + v.Minor.ToString() + "." + v.Build.ToString();
+
             modules.Add(new MechJebModuleSmartASS(this));
             modules.Add(new MechJebModuleTranslatron(this));
             modules.Add(new MechJebModuleOrbitInfo(this));
@@ -991,12 +1020,14 @@ namespace MuMech
             modules.Add(new MechJebModuleAscentAutopilot(this));
             modules.Add(new MechJebModuleOrbitOper(this));
             modules.Add(new MechJebModuleRendezvous(this));
-            //modules.Add(new MechJebModuleGlideslope(this));
+            modules.Add(new MechJebModuleILS(this));
             //modules.Add(new MechJebModuleOrbitPlane(this));
 
             //modules.Add(new MechJebModuleJoke(this));
 
             //modules.Add(new MechJebModuleAscension(this));
+
+            //modules.Add(new MechJebModuleAutom8(this));
 
             foreach (ComputerModule module in modules)
             {

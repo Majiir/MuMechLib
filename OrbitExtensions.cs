@@ -1,6 +1,6 @@
 using System;
 using UnityEngine;
-
+//*TODO, FindAN() seems to reverse the AN and DN either some, or all of the time.
 namespace OrbitExtensions
 {
     internal static class OrbitExtensions
@@ -414,12 +414,24 @@ namespace OrbitExtensions
 
 
         //Orbit.getRelativePositionAtUT seems to be less precise, or something?
-        public static Vector3d getPositionAtTime(this Orbit orbit, double UT)
+        public static Vector3d getAbsolutePositionAtUT(this Orbit orbit, double UT)
         {
             Vector3d pos = orbit.getRelativePositionAtUT(UT);
             pos += orbit.referenceBody.position;
             return pos;
+
+/*            double timeFromNow = UT - Planetarium.GetUniversalTime();
+            double timeSincePe = (orbit.eccentricity > 1 ? -orbit.timeToPe : timeFromNow + (orbit.period - orbit.timeToPe));
+
+            return orbit.getPositionAtT(timeSincePe);*/
         }
 
+        public static double relativeInclination(this Orbit a, Orbit b)
+        {
+            Vector3d normalA = Vector3d.Cross(a.pos, a.vel);
+            Vector3d normalB = Vector3d.Cross(b.pos, b.vel);
+
+            return Math.Abs(Vector3d.Angle(normalA, normalB));
+        }
     }
 }
