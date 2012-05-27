@@ -217,15 +217,11 @@ namespace MuMech
 
         if (Mode == UIMode.TARGET_SELECTION)
             RenderTargetSelectUI(sty,but);
-            
-		if (Mode == UIMode.SELECTED)
-			RenderTargetInfoUI (sty, but);
-			/* used to reroute vessels and debris to old menus
+
         if (Mode == UIMode.SELECTED && core.targetType==MechJebCore.TargetType.BODY)
             RenderTargetInfoUI(sty,but);
         if (Mode == UIMode.SELECTED && core.targetType!=MechJebCore.TargetType.BODY)
 			RenderSelectedUI(sty,but);
-			*/
         if (Mode == UIMode.ALIGN)
             RenderAlignUI(sty,but);
 
@@ -258,32 +254,81 @@ namespace MuMech
         }
     }
     
-    private void RenderTargetInfoUI(GUIStyle sty, GUIStyle but)   
+    private void RenderTargetInfoUI(GUIStyle sty, GUIStyle but)
+    
     {
-    windowPos = new Rect (windowPos.x, windowPos.y, 10, 10);
     GUILayout.BeginVertical();
     if (GUILayout.Button ("Back",but))
     {
     Mode = UIMode.TARGET_SELECTION;
     core.setTarget();
     }
+    GUILayout.Label (" ", sty);
+    //Body
     
-	//align planes data
-	GUILayout.Label ("Time to AN : " + part.vessel.orbit.GetTimeToRelAN(core.targetOrbit()).ToString ("F2"),sty);
-	GUILayout.Label ("Time to DN : " + part.vessel.orbit.GetTimeToRelDN(core.targetOrbit()).ToString ("F2"),sty);
-	GUILayout.Label ("Relative Inclination :" + (core.targetOrbit().inclination - vesselState.orbitInclination).ToString ("F2"),sty);
-	
-	//rendevous data
-	if (core.distanceFromTarget() > 10000) {
-					GUILayout.Label ("Distance: " + (core.distanceFromTarget() / 1000).ToString ("F1") + "km", GUILayout.Width (300));		
-				} else {
-					GUILayout.Label ("Distance: " + core.distanceFromTarget().ToString ("F1") + "m", GUILayout.Width (300));
+    if (core.targetType == MechJebCore.TargetType.BODY){
+    
+    GUILayout.Label ("Time to AN : " +
+                      part.vessel.orbit.GetTimeToRelAN (core.targetBody.orbit).ToString ("F2"), sty);
+				GUILayout.Label ("Time to DN : " +
+                      part.vessel.orbit.GetTimeToRelDN (core.targetBody.orbit).ToString ("F2"), sty);
+				GUILayout.Label ("Relative Inclination :" + (core.targetBody.orbit.inclination-vesselState.orbitInclination).ToString ("F2"), sty);
+    GUILayout.EndVertical();
+    }
+    //
+    // Vessel/Debris
+    if (core.targetType == MechJebCore.TargetType.VESSEL) {
+				if (!CheckVessel ()) {
+					_flyByWire = false;
+					Mode = UIMode.TARGET_SELECTION;
 				}
-				GUILayout.Label ("Relative Velocity: " + core.relativeVelocityToTarget().magnitude.ToString ("F2"));
-				GUILayout.EndVertical ();	
+	//align planes data
+	GUILayout.Label ("Time to AN : " +
+                      part.vessel.orbit.GetTimeToRelAN (core.targetVessel.orbit).ToString ("F2"),sty);
+	GUILayout.Label ("Time to DN : " +
+                      part.vessel.orbit.GetTimeToRelDN (core.targetVessel.orbit).ToString ("F2"),sty);
+	GUILayout.Label ("Relative Inclination :" + (core.targetVessel.orbit.inclination - vesselState.orbitInclination).ToString ("F2"),sty);
+	GUILayout.EndVertical();
+	
+	//sync orbits data
+	/*
+    GUILayout.BeginHorizontal();
+    for (int i = 0; i < NumberOfPredictedSyncPoints; i++)
+    {
+        if (i != (int) SyncMode) 
+            continue;
+
+        if (GUILayout.Button(SyncMode.ToString(),but, GUILayout.ExpandWidth(true)))
+        {
+            if (i == NumberOfPredictedSyncPoints - 1) SyncMode = 0;
+            else SyncMode = SyncMode + 1;
+        }
+        //GUILayout.Box(SyncMode.ToString(),but);
+    }
+    GUILayout.EndHorizontal();
+    GUILayout.BeginVertical();
+
+    GUILayout.Box("Orbit		ShipToR		TgtToR ", GUILayout.ExpandWidth(true));
+    for (int i = 0; i < 4; i++)
+        GUILayout.Box(_syncString[i]);
+
+    GUILayout.Label("Closest Approach on Orbit " + _closestApproachOrbit.ToString(),sty);
+    GUILayout.Label("Min Separation (sec) : " + _minimumPredictedTimeFromTarget.ToString("f1"),sty);
+	
+	if (automation ==true)
+	{
+	    if(GUILayout.Button(_autoPhaser ? _autoPhaserState.ToString() : "Auto Sync", but, GUILayout.ExpandWidth(true)))
+	    {
+	        _autoPhaser = !_autoPhaser;
+	        _autoPhaserState = AutoPhaserState.Step1WaitForTargetApsis;
+	    }
+    }
+	
+				 */
+	//rendevous data
 		}
     
-    
+    }
     
     private void RenderTargetSelectUI(GUIStyle sty, GUIStyle but)
     {
@@ -377,6 +422,9 @@ namespace MuMech
     private void RenderVesselsUI(GUIStyle sty,GUIStyle but)
     {
         GUILayout.Box("Select Target",sty);
+
+        //TODO: ADD BODY SUPPORT
+        //create a button for each vessel, and store the location of the selected vessel
 
         _scrollPosition = GUILayout.BeginScrollView(_scrollPosition, GUILayout.Width(300), GUILayout.Height(300));
 
@@ -730,6 +778,7 @@ namespace MuMech
         _relativeVelocity = selectedVessel.orbit.GetVel() - part.vessel.orbit.GetVel();
         _vectorToTarget = selectedVessel.transform.position - part.vessel.transform.position;
         _targetDistance = Vector3.Distance(selectedVessel.transform.position, part.vessel.transform.position);
+
         _relativeInclination = (float) selectedVessel.orbit.inclination - (float) part.vessel.orbit.inclination;
 
         switch (PointAt)
@@ -1136,7 +1185,7 @@ namespace MuMech
 
         if (_modeChanged)
         {
-           windowPos = new Rect (windowPos.x, windowPos.y, 10, 10);
+            WindowPos.width = WindowPos.height = 20;
             _modeChanged = false;
         }
     }
