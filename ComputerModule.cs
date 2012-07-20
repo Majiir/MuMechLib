@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using UnityEngine;
+using SharpLua.LuaTypes;
 
 namespace MuMech
 {
@@ -223,6 +224,10 @@ namespace MuMech
         public virtual String getName()
         {
             return "Computer Module";
+        }
+
+        public virtual void registerLuaMembers(LuaTable index)
+        {
         }
 
         protected void print(String s)

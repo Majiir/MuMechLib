@@ -77,7 +77,7 @@ public class MuMechServo : MuMechToggle
                 settings["key"] = "";
                 settings["revkey"] = "";
             }
-            customPartData = Convert.ToBase64String(KSP.IO.IOTools.SerializeToBinary(settings)).Replace("=", "*").Replace("/", "|");
+            customPartData = Convert.ToBase64String(KSP.IO.IOUtils.SerializeToBinary(settings)).Replace("=", "*").Replace("/", "|");
         }
         base.onBackup();
     }
@@ -101,7 +101,7 @@ public class MuMechServo : MuMechToggle
         allServos.Add(this);
         if (customPartData != "")
         {
-            Dictionary<string, object> settings = (Dictionary<string, object>)KSP.IO.IOTools.DeserializeFromBinary(Convert.FromBase64String(customPartData.Replace("*", "=").Replace("|", "/")));
+            Dictionary<string, object> settings = (Dictionary<string, object>)KSP.IO.IOUtils.DeserializeFromBinary(Convert.FromBase64String(customPartData.Replace("*", "=").Replace("|", "/")));
             servoName = (string)settings["name"];
             string groupName = (string)settings["group"];
             if (groupName != "")

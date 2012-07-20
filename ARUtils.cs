@@ -29,6 +29,10 @@ namespace MuMech
                     {
                         thrust += (1.0 - throttle) * ((LiquidEngine)p).minThrust + throttle * ((LiquidEngine)p).maxThrust;
                     }
+                    if (p is LiquidFuelEngine)
+                    {
+                        thrust += (1.0 - throttle) * ((LiquidFuelEngine)p).minThrust + throttle * ((LiquidFuelEngine)p).maxThrust;
+                    }
                     if (p is SolidRocket)
                     {
                         thrust += ((SolidRocket)p).thrust;
@@ -66,7 +70,7 @@ namespace MuMech
 
         public static bool hasIdleEngineDescendant(Part p)
         {
-            if ((p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine)) return true;
+            if ((p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine || p is LiquidFuelEngine)) return true;
             foreach (Part child in p.children)
             {
                 if (hasIdleEngineDescendant(child)) return true;
@@ -77,8 +81,8 @@ namespace MuMech
         //detect if a part is above an active or idle engine in the part tree
         public static bool hasActiveOrIdleEngineOrTankDescendant(Part p)
         {
-            if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE) 
-                && (p is SolidRocket || (p is LiquidEngine && engineHasFuel(p)))) return true;
+            if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE)
+                && (p is SolidRocket || (p is LiquidEngine && engineHasFuel(p)) || (p is LiquidFuelEngine && engineHasFuel(p)))) return true;
             if ((p is FuelTank) && ((FuelTank)p).fuel > 0) return true;
             foreach (Part child in p.children)
             {
@@ -90,8 +94,8 @@ namespace MuMech
         //detect if a part is above a deactivated engine or fuel tank
         public static bool hasDeactivatedEngineOrTankDescendant(Part p)
         {
-            if ((p.State == PartStates.DEACTIVATED) && (p is SolidRocket || p is LiquidEngine || p is FuelTank)) return true;
-            if (p is LiquidEngine && !engineHasFuel(p)) return true;
+            if ((p.State == PartStates.DEACTIVATED) && (p is SolidRocket || p is LiquidEngine || p is LiquidFuelEngine || p is FuelTank)) return true;
+            if (((p is LiquidEngine) || (p is LiquidFuelEngine)) && !engineHasFuel(p)) return true;
             foreach (Part child in p.children)
             {
                 if (hasDeactivatedEngineOrTankDescendant(child)) return true;
@@ -104,7 +108,7 @@ namespace MuMech
         {
             foreach (Part p in v.parts)
             {
-                if (p.inverseStage == inverseStage && (p is Decoupler || p is RadialDecoupler) && hasActiveOrIdleEngineOrTankDescendant(p))
+                if (p.inverseStage == inverseStage && (p is Decoupler || p is DecouplerGUI || p is RadialDecoupler) && hasActiveOrIdleEngineOrTankDescendant(p))
                 {
                     return true;
                 }
@@ -117,7 +121,7 @@ namespace MuMech
         {
             foreach (Part p in v.parts)
             {
-                if (p.inverseStage == inverseStage && (p is Decoupler || p is RadialDecoupler) && hasDeactivatedEngineOrTankDescendant(p)) return true;
+                if (p.inverseStage == inverseStage && (p is Decoupler || p is DecouplerGUI || p is RadialDecoupler) && hasDeactivatedEngineOrTankDescendant(p)) return true;
             }
             return false;
         }
@@ -128,7 +132,7 @@ namespace MuMech
         {
             foreach (Part p in v.parts)
             {
-                if (p.inverseStage == inverseStage && (p is Decoupler || p is RadialDecoupler)) return true;
+                if (p.inverseStage == inverseStage && (p is Decoupler || p is DecouplerGUI || p is RadialDecoupler)) return true;
             }
             return false;
         }

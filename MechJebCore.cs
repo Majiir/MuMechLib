@@ -1,9 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Linq;
 using UnityEngine;
 using MuMech;
 using System.Reflection;
+using SharpLua;
+using SharpLua.LuaTypes;
 
 namespace MuMech
 {
@@ -16,6 +19,8 @@ namespace MuMech
 
     public class MechJebCore
     {
+        public float lastThrottle;
+
         public enum AttitudeReference
         {
             INERTIAL,          //world coordinate system.
@@ -84,6 +89,8 @@ namespace MuMech
                 return _controlModule;
             }
         }
+
+        public MechJebModuleAutom8 autom8 = null;
 
         public VesselState vesselState;
 
@@ -266,6 +273,12 @@ namespace MuMech
             }
         }
 
+        // Auto Staging
+        protected double lastStageTime = 0;
+        public bool autoStage = false;
+        public double autoStageDelay = 1.0;
+        public int autoStageLimit = 0;
+
         // Main window
         private WindowStat _main_windowStat;
         protected WindowStat main_windowStat
@@ -430,14 +443,14 @@ namespace MuMech
                     break;
                 case AttitudeReference.TARGET_ORIENTATION:
                     switch (targetType)
-	                {
+                    {
                         case TargetType.VESSEL:
                             rotRef = Quaternion.LookRotation(targetVessel.transform.up, targetVessel.transform.right);
                             break;
                         case TargetType.BODY:
                             rotRef = vesselState.rotationSurface;
                             break;
-	                }
+                    }
                     break;
             }
             return rotRef;
@@ -492,6 +505,11 @@ namespace MuMech
 
         }
 
+        public bool attitudeTo(double heading, double pitch, double roll, ComputerModule controller) {
+            Quaternion attitude = Quaternion.AngleAxis((float)heading, Vector3.up) * Quaternion.AngleAxis(-(float)pitch, Vector3.right) * Quaternion.AngleAxis(-(float)roll, Vector3.forward);
+            return attitudeTo(attitude, MechJebCore.AttitudeReference.SURFACE_NORTH, controller);
+        }
+
         public bool attitudeDeactivate(ComputerModule controller)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller))
@@ -510,23 +528,23 @@ namespace MuMech
         {
             return Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward));
         }
-		public float distanceFromTarget()
-		{
-			return Vector3.Distance(((targetType == TargetType.VESSEL) ? (Vector3d)targetVessel.transform.position : targetBody.position),part.vessel.transform.position);
-		}
-		public Orbit targetOrbit()
-		{
-		return targetType == TargetType.VESSEL ? targetVessel.orbit : targetBody.orbit;
-		}
-		public Vector3d relativeVelocityToTarget()
-		{
-			return (vesselState.velocityVesselOrbit - ((targetType == TargetType.VESSEL) ? targetVessel.orbit.GetVel () : targetBody.orbit.GetVel ()));
-		}
-		public string targetName()
-		{
-			return targetType==TargetType.VESSEL ? targetVessel.vesselName : targetBody.name;
-		}
-		
+        public float distanceFromTarget()
+        {
+            return Vector3.Distance(((targetType == TargetType.VESSEL) ? (Vector3d)targetVessel.transform.position : targetBody.position), part.vessel.transform.position);
+        }
+        public Orbit targetOrbit()
+        {
+            return targetType == TargetType.VESSEL ? targetVessel.orbit : targetBody.orbit;
+        }
+        public Vector3d relativeVelocityToTarget()
+        {
+            return (vesselState.velocityVesselOrbit - ((targetType == TargetType.VESSEL) ? targetVessel.orbit.GetVel() : targetBody.orbit.GetVel()));
+        }
+        public string targetName()
+        {
+            return targetType == TargetType.VESSEL ? targetVessel.vesselName : targetBody.name;
+        }
+
         public void setTarget(Vessel target)
         {
             targetVessel = target;
@@ -582,7 +600,7 @@ namespace MuMech
         }
 
 
-        public bool warpIncrease(ComputerModule controller, bool instant = true, double maxRate = 10000.0)
+        public bool warpIncrease(ComputerModule controller, bool instant = true, double maxRate = 100000.0)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller)) return false;
 
@@ -669,6 +687,48 @@ namespace MuMech
             }
         }
 
+        public bool autoStageActivate(ComputerModule controller, double stagingDelay = 1.0, int stageLimit = 0)
+        {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller))
+            {
+                return false;
+            }
+
+            autoStage = true;
+            autoStageDelay = stagingDelay;
+            autoStageLimit = stageLimit;
+
+            return true;
+        }
+
+        public bool autoStageDeactivate(ComputerModule controller)
+        {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller))
+            {
+                return false;
+            }
+
+            autoStage = false;
+
+            return true;
+        }
+
+        public bool launch(ComputerModule controller)
+        {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller))
+            {
+                return false;
+            }
+
+            lastStageTime = vesselState.time;
+            if (Staging.CurrentStage == Staging.StageCount)
+            {
+                Staging.ActivateNextStage();
+                return true;
+            }
+
+            return false;
+        }
 
         private void drive(FlightCtrlState s)
         {
@@ -696,8 +756,21 @@ namespace MuMech
                 return;
             }
 
-            double int_error = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0;
+            driveThrust(s);
+            driveAttitude(s);
+            driveAutoStaging();
 
+            if (double.IsNaN(s.mainThrottle))
+            {
+                print("MechJeb: caught throttle = NaN");
+                s.mainThrottle = 0;
+            }
+
+            lastThrottle = s.mainThrottle;
+        }
+
+        private void driveThrust(FlightCtrlState s)
+        {
             if ((tmode != TMode.OFF) && (vesselState.thrustAvailable > 0))
             {
                 double spd = 0;
@@ -724,6 +797,7 @@ namespace MuMech
                         }
                         if (!trans_land_gears && (minalt < 1000))
                         {
+                            part.vessel.rootPart.SendEvent("LowerLeg");
                             foreach (Part p in part.vessel.parts)
                             {
                                 if (p is LandingLeg)
@@ -798,6 +872,8 @@ namespace MuMech
                 double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
                 t_prev_err = t_err;
 
+                double int_error = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0;
+
                 if ((tmode != TMode.KEEP_VERTICAL) || !trans_kill_h || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 90)))
                 {
                     if (tmode == TMode.DIRECT)
@@ -821,11 +897,15 @@ namespace MuMech
                     }
                 }
             }
+        }
 
+        private void driveAttitude(FlightCtrlState s)
+        {
             if (attitudeActive)
             {
                 int userCommanding = (Mathfx.Approx(s.pitch, 0, 0.1F) ? 0 : 1) + (Mathfx.Approx(s.yaw, 0, 0.1F) ? 0 : 2) + (Mathfx.Approx(s.roll, 0, 0.1F) ? 0 : 4);
                 double precision = Math.Max(0.5, Math.Min(10.0, (vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle) * 20.0 / vesselState.MoI.magnitude));
+                double int_error = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0;
 
                 Quaternion target = attitudeGetReferenceRotation(attitudeReference) * attitudeTarget;
                 Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * target);
@@ -863,6 +943,8 @@ namespace MuMech
 
                 if (userCommanding != 0)
                 {
+                    s.killRot = false;
+
                     if (attitudeKILLROT)
                     {
                         attitudeTo(Quaternion.LookRotation(part.vessel.transform.up, -part.vessel.transform.forward), AttitudeReference.INERTIAL, null);
@@ -898,13 +980,32 @@ namespace MuMech
                 }
                 stress = Mathf.Min(Mathf.Abs(act.x), 1.0F) + Mathf.Min(Mathf.Abs(act.y), 1.0F) + Mathf.Min(Mathf.Abs(act.z), 1.0F);
             }
+        }
 
-            if (double.IsNaN(s.mainThrottle))
+        private void driveAutoStaging()
+        {
+            //if autostage enabled, and if we are not waiting on the pad, and if there are stages left,
+            //and if we are allowed to continue staging, and if we didn't just fire the previous stage
+            if (autoStage && liftedOff && Staging.CurrentStage > 0 && Staging.CurrentStage > autoStageLimit 
+                && vesselState.time - lastStageTime > autoStageDelay)
             {
-                print("MechJeb: caught throttle = NaN");
-                s.mainThrottle = 0;
-            }
+                //don't decouple active or idle engines or tanks
+                if (!ARUtils.inverseStageDecouplesActiveOrIdleEngineOrTank(Staging.CurrentStage - 1, part.vessel))
+                {
+                    //only fire decouplers to drop deactivated engines or tanks
+                    if (!ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel)
+                        || ARUtils.inverseStageDecouplesDeactivatedEngineOrTank(Staging.CurrentStage - 1, part.vessel))
+                    {
+                        if (ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel))
+                        {
+                            //if we decouple things, delay the next stage a bit to avoid exploding the debris
+                            lastStageTime = vesselState.time;
+                        }
 
+                        Staging.ActivateNextStage();
+                    }
+                }
+            }
         }
 
         private void main_WindowGUI(int windowID)
@@ -1015,19 +1116,21 @@ namespace MuMech
             modules.Add(new MechJebModuleTranslatron(this));
             modules.Add(new MechJebModuleOrbitInfo(this));
             modules.Add(new MechJebModuleSurfaceInfo(this));
-            //modules.Add(new MechJebModuleVesselInfo(this));
+            modules.Add(new MechJebModuleVesselInfo(this));
             modules.Add(new MechJebModuleLandingAutopilot(this));
             modules.Add(new MechJebModuleAscentAutopilot(this));
             modules.Add(new MechJebModuleOrbitOper(this));
-            modules.Add(new MechJebModuleRendezvous(this));
+            //modules.Add(new MechJebModuleRendezvous(this));
             modules.Add(new MechJebModuleILS(this));
+
             //modules.Add(new MechJebModuleOrbitPlane(this));
 
             //modules.Add(new MechJebModuleJoke(this));
 
             //modules.Add(new MechJebModuleAscension(this));
 
-            //modules.Add(new MechJebModuleAutom8(this));
+            autom8 = new MechJebModuleAutom8(this);
+            modules.Add(autom8);
 
             foreach (ComputerModule module in modules)
             {
@@ -1075,7 +1178,7 @@ namespace MuMech
                 return;
             }
 
-            if (((part.vessel.rootPart is Decoupler) || (part.vessel.rootPart is RadialDecoupler)) && part.vessel.rootPart.gameObject.layer != 2)
+            if (((part.vessel.rootPart is Decoupler) || (part.vessel.rootPart is DecouplerGUI) || (part.vessel.rootPart is RadialDecoupler)) && part.vessel.rootPart.gameObject.layer != 2)
             {
                 print("Disabling collision with decoupler...");
                 EditorLogic.SetLayerRecursive(part.vessel.rootPart.gameObject, 2);
@@ -1091,7 +1194,7 @@ namespace MuMech
                 List<Part> tmp = new List<Part>(part.vessel.parts);
                 foreach (Part p in tmp)
                 {
-                    if ((p is Decoupler) || (p is RadialDecoupler))
+                    if ((p is Decoupler) || (p is DecouplerGUI) || (p is RadialDecoupler))
                     {
                         print("Disabling collision with decoupler...");
                         EditorLogic.SetLayerRecursive(p.gameObject, 2);
@@ -1140,7 +1243,11 @@ namespace MuMech
                     liftedOff = true;
                 }
 
-                if (part.vessel != FlightGlobals.ActiveVessel)
+                if (part.vessel == FlightGlobals.ActiveVessel)
+                {
+                    MechJebModuleAutom8.instance = autom8;
+                }
+                else
                 {
                     FlightCtrlState s = new FlightCtrlState();
                     drive(s);
@@ -1569,6 +1676,257 @@ namespace MuMech
             foreach (ComputerModule module in modules)
             {
                 module.onUnpack();
+            }
+        }
+
+        public LuaValue proxyControlClaim(LuaValue[] arg)
+        {
+            return LuaBoolean.From(controlClaim(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : false));
+        }
+
+        public LuaValue proxyControlRelease(LuaValue[] arg)
+        {
+            return LuaBoolean.From(controlRelease(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : false));
+        }
+
+        public LuaValue proxyAttitudeGetReferenceRotation(LuaValue[] arg)
+        {
+            if (arg.Count() != 1)
+            {
+                throw new Exception("usage: attitudeGetReferenceRotation(reference)");
+            }
+
+            AttitudeReference r;
+            try
+            {
+                r = (AttitudeReference)Enum.Parse(typeof(AttitudeReference), arg[0].ToString(), true);
+            }
+            catch (Exception)
+            {
+                throw new Exception("attitudeGetReferenceRotation: invalid reference");
+            }
+
+            return LuaUtils.QuaternionToTable(attitudeGetReferenceRotation(r));
+        }
+
+        public LuaValue proxyAttitudeWorldToReference(LuaValue[] arg)
+        {
+            if (arg.Count() != 2)
+            {
+                throw new Exception("usage: attitudeWorldToReference(vector, reference)");
+            }
+
+            Vector3d dir;
+            try
+            {
+                dir = LuaUtils.valueToVector3d(arg[0]);
+            }
+            catch (Exception e)
+            {
+                throw new Exception("attitudeWorldToReference: invalid vector - " + e.Message);
+            }
+
+            AttitudeReference r;
+            try
+            {
+                r = (AttitudeReference)Enum.Parse(typeof(AttitudeReference), arg[1].ToString(), true);
+            }
+            catch (Exception)
+            {
+                throw new Exception("attitudeWorldToReference: invalid reference");
+            }
+
+            return LuaUtils.Vector3dToTable(attitudeWorldToReference(dir, r));
+        }
+
+        public LuaValue proxyAttitudeReferenceToWorld(LuaValue[] arg)
+        {
+            if (arg.Count() != 2)
+            {
+                throw new Exception("usage: attitudeReferenceToWorld(vector, reference)");
+            }
+
+            Vector3d dir;
+            try
+            {
+                dir = LuaUtils.valueToVector3d(arg[0]);
+            }
+            catch (Exception e)
+            {
+                throw new Exception("attitudeReferenceToWorld: invalid vector - " + e.Message);
+            }
+
+            AttitudeReference r;
+            try
+            {
+                r = (AttitudeReference)Enum.Parse(typeof(AttitudeReference), arg[1].ToString(), true);
+            }
+            catch (Exception)
+            {
+                throw new Exception("attitudeReferenceToWorld: invalid reference");
+            }
+
+            return LuaUtils.Vector3dToTable(attitudeReferenceToWorld(dir, r));
+        }
+
+        public LuaValue proxyAttitudeTo(LuaValue[] arg)
+        {
+            if (arg.Count() != 2)
+            {
+                throw new Exception("usage: attitudeTo(vector, reference)");
+            }
+
+            Vector3d dir;
+            try
+            {
+                dir = LuaUtils.valueToVector3d(arg[0]);
+            }
+            catch (Exception e)
+            {
+                throw new Exception("attitudeTo: invalid vector - " + e.Message);
+            }
+
+            AttitudeReference r;
+            try
+            {
+                r = (AttitudeReference)Enum.Parse(typeof(AttitudeReference), arg[1].ToString(), true);
+            }
+            catch (Exception)
+            {
+                throw new Exception("attitudeTo: invalid reference");
+            }
+
+            return LuaBoolean.From(attitudeTo(dir, r, autom8));
+        }
+
+        public LuaValue proxyAttitudeDeactivate(LuaValue[] arg)
+        {
+            return LuaBoolean.From(attitudeDeactivate(autom8));
+        }
+
+        public LuaValue proxyAttitudeAngleFromTarget(LuaValue[] arg)
+        {
+            return new LuaNumber(attitudeAngleFromTarget());
+        }
+
+        public LuaValue proxyDistanceFromTarget(LuaValue[] arg)
+        {
+            return new LuaNumber(distanceFromTarget());
+        }
+
+        public LuaValue proxyRelativeVelocityToTarget(LuaValue[] arg)
+        {
+            return LuaUtils.Vector3dToTable(relativeVelocityToTarget());
+        }
+
+        public LuaValue proxyTargetName(LuaValue[] arg)
+        {
+            return new LuaString(targetName());
+        }
+
+        //public LuaValue proxySetTarget(LuaValue[] arg) { }
+
+        public LuaValue proxyLandActivate(LuaValue[] arg)
+        {
+            return LuaBoolean.From(landActivate(autom8, ((arg.Count() > 0) && (arg[0] is LuaNumber)) ? (arg[0] as LuaNumber).Number : 0.5));
+        }
+
+        public LuaValue proxyLandDeactivate(LuaValue[] arg)
+        {
+            return LuaBoolean.From(landDeactivate(autom8));
+        }
+
+        public LuaValue proxyWarpIncrease(LuaValue[] arg)
+        {
+            return LuaBoolean.From(warpIncrease(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : true, ((arg.Count() > 1) && (arg[1] is LuaNumber)) ? (arg[1] as LuaNumber).Number : 10000));
+        }
+
+        public LuaValue proxyWarpDecrease(LuaValue[] arg)
+        {
+            warpDecrease(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : true);
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyWarpMinimum(LuaValue[] arg)
+        {
+            warpMinimum(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : true);
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyWarpPhysics(LuaValue[] arg)
+        {
+            warpPhysics(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : true);
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyAutoStageActivate(LuaValue[] arg)
+        {
+            return LuaBoolean.From(autoStageActivate(autom8, ((arg.Count() > 0) && (arg[0] is LuaNumber)) ? (arg[0] as LuaNumber).Number : 1.0, ((arg.Count() > 1) && (arg[1] is LuaNumber)) ? (int)(arg[1] as LuaNumber).Number : 0));
+        }
+
+        public LuaValue proxyAutoStageDeactivate(LuaValue[] arg)
+        {
+            return LuaBoolean.From(autoStageDeactivate(autom8));
+        }
+
+        public LuaValue proxyLaunch(LuaValue[] arg)
+        {
+            return LuaBoolean.From(launch(autom8));
+        }
+
+        public LuaValue proxyGetAttitudeActive(LuaValue[] arg)
+        {
+            return LuaBoolean.From(attitudeActive);
+        }
+
+        public LuaValue proxyGetControlClaimed(LuaValue[] arg)
+        {
+            return LuaBoolean.From(controlModule != null);
+        }
+
+        public LuaValue proxyBusy(LuaValue[] arg)
+        {
+            return LuaBoolean.From(attitudeActive || (controlModule != null));
+        }
+
+        public LuaValue proxyFree(LuaValue[] arg)
+        {
+            return LuaBoolean.From(!attitudeActive && (controlModule == null));
+        }
+
+        public void registerLuaMembers(LuaTable index)
+        {
+            index.Register("controlClaim", proxyControlClaim);
+            index.Register("controlRelease", proxyControlRelease);
+            index.Register("attitudeGetReferenceRotation", proxyAttitudeGetReferenceRotation);
+            index.Register("attitudeWorldToReference", proxyAttitudeWorldToReference);
+            index.Register("attitudeReferenceToWorld", proxyAttitudeReferenceToWorld);
+            index.Register("attitudeTo", proxyAttitudeTo);
+            index.Register("attitudeDeactivate", proxyAttitudeDeactivate);
+            index.Register("attitudeAngleFromTarget", proxyAttitudeAngleFromTarget);
+            index.Register("distanceFromTarget", proxyDistanceFromTarget);
+            index.Register("relativeVelocityToTarget", proxyRelativeVelocityToTarget);
+            index.Register("targetName", proxyTargetName);
+            //index.Register("setTarget", proxySetTarget);
+            index.Register("landActivate", proxyLandActivate);
+            index.Register("landDeactivate", proxyLandDeactivate);
+            index.Register("warpIncrease", proxyWarpIncrease);
+            index.Register("warpDecrease", proxyWarpDecrease);
+            index.Register("warpMinimum", proxyWarpMinimum);
+            index.Register("warpPhysics", proxyWarpPhysics);
+            index.Register("autoStageActivate", proxyAutoStageActivate);
+            index.Register("autoStageDeactivate", proxyAutoStageDeactivate);
+            index.Register("launch", proxyLaunch);
+
+            index.Register("getAttitudeActive", proxyGetAttitudeActive);
+            index.Register("getControlClaimed", proxyGetControlClaimed);
+
+            index.Register("busy", proxyBusy);
+            index.Register("free", proxyFree);
+
+            foreach (ComputerModule m in modules)
+            {
+                m.registerLuaMembers(index);
             }
         }
 

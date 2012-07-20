@@ -7,7 +7,6 @@ using MuMech;
 
 public class MuMechJebAR202 : MuMechPart
 {
-
     public MechJebCore core = null;
 
     //light stuff

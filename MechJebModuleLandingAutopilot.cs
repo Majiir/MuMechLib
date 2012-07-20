@@ -5,6 +5,7 @@ using System.Text;
 using System.Diagnostics;
 using UnityEngine;
 using OrbitExtensions;
+using SharpLua.LuaTypes;
 
 /*
  * Todo:
@@ -12,7 +13,6 @@ using OrbitExtensions;
  * -Improve behavior landing from low orbits
  * -put main simulation in a separate thread
  * -display a target icon showing the landing target in the map view
- * -Investigate claims of crashes
  * -is land not turning off attitude control when it lands?
  * 
  * Future:
@@ -30,13 +30,81 @@ namespace MuMech
 
         public MechJebModuleLandingAutopilot(MechJebCore core) : base(core) { }
 
-        //programmatic interface to land at a specific target. this should probably
-        //only be called if the module has been enabled for a while so that it has had
-        //the chance to run at least one landing simulation. I'm not sure what will happen
-        //if you enable the module and then immediately call landAt()
+        public override void registerLuaMembers(LuaTable index)
+        {
+            index.Register("land", proxyLand);
+            index.Register("landAt", proxyLandAt);
+        }
+
+        public LuaValue proxyLand(LuaValue[] args)
+        {
+            land();
+            return LuaNil.Nil;
+        }
+
+        public void land()
+        {
+            autoLandAtTarget = false;
+            autoLand = true;
+            core.controlClaim(this);
+            core.landActivate(this, touchdownSpeed);
+            FlightInputHandler.SetNeutralControls();
+        }
+
+        public LuaValue proxyLandAt(LuaValue[] args)
+        {
+            if (args.Count() < 2 && args.Count() > 3)
+            {
+                throw new Exception("landAt usage: landAt(latitude, longitude) or landAt(latitude, longitude, autoWarpOnDescent)");
+            }
+
+            double argLatitude;
+            double argLongitude;
+
+            try
+            {
+                argLatitude = ((LuaNumber)args[0]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("landAt: invalid latitude");
+            }
+
+            try
+            {
+                argLongitude = ((LuaNumber)args[1]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("landAt: invalid longitude");
+            }
+
+            if (args.Count() == 3)
+            {
+                try
+                {
+                    autoWarpOnDescent = ((LuaBoolean)args[2]).BoolValue;
+                }
+                catch (Exception)
+                {
+                    throw new Exception("landAt: invalid autoWarpOnDescent");
+                }
+            }
+            else
+            {
+                autoWarpOnDescent = true;
+            }
+
+            landAt(argLatitude, argLongitude);
+            return LuaNil.Nil;
+        }
+
+        //programmatic interface to land at a specific target. 
         public void landAt(double latitude, double longitude)
         {
-            core.controlClaim(this);
+            this.enabled = true;
+
+            core.controlClaim(this);            
 
             autoLandAtTarget = true;
             deorbitBurnFirstMessage = false;
@@ -52,6 +120,20 @@ namespace MuMech
             core.landDeactivate(this);
             landStep = LandStep.COURSE_CORRECTIONS;
             FlightInputHandler.SetNeutralControls();
+
+            //run an initial landing simulation
+            prediction = simulateReentryRK4(simulationTimeStep, Vector3d.zero);
+
+            //initialize the state machine
+            if (part.vessel.orbit.PeA < 0 || prediction.outcome == LandingPrediction.Outcome.LANDED)
+            {
+                landStep = LandStep.COURSE_CORRECTIONS;
+            }
+            else
+            {
+                landStep = LandStep.DEORBIT_BURN;
+                deorbiting = false;
+            }
         }
 
         public override void onModuleDisabled()
@@ -213,6 +295,8 @@ namespace MuMech
         bool tooLittleThrustToLand = false;
         bool deorbitBurnFirstMessage = false;
         double decelerationEndAltitudeASL = 2500.0;
+
+        public bool autoWarpOnDescent = false;
 
         MechJebModuleOrbitOper orbitOper;
 
@@ -376,7 +460,6 @@ namespace MuMech
                 if (parseError) labelStyle.normal.textColor = Color.yellow;
                 GUIStyle compassToggleStyle = new GUIStyle(GUI.skin.button);
                 compassToggleStyle.padding.bottom = compassToggleStyle.padding.top = 3;
-                //                compassToggleStyle.padding.left = 3;
 
                 GUILayout.Label("Target:", labelStyle, GUILayout.Width(40));
                 targetLatitudeDegString = GUILayout.TextField(targetLatitudeDegString, GUILayout.Width(35));
@@ -475,10 +558,7 @@ namespace MuMech
                         GUILayout.Label(String.Format("{1:0.0} km " + (northError > 0 ? "north" : "south") +
                             ", {0:0.0} km " + (eastError > 0 ? "east" : "west") + " of target", Math.Abs(eastError), Math.Abs(northError)));
                     }
-                    //double currentLatitude = part.vessel.mainBody.GetLatitude(vesselState.CoM);
-                    //double currentLongitude = part.vessel.mainBody.GetLongitude(vesselState.CoM);
-                    //if (dmsInput) GUILayout.Label("Current coordinates: " + dmsLocationString(currentLatitude, currentLongitude));
-                    //else GUILayout.Label(String.Format("Current coordinates: {0:0.000}° N, {1:0.000}° E", currentLatitude, ARUtils.clampDegrees(currentLongitude)));
+
                     break;
 
                 case LandingPrediction.Outcome.AEROBRAKED:
@@ -866,7 +946,14 @@ namespace MuMech
             //check if another course correction is needed:
             double errorKm = part.vessel.mainBody.Radius / 1000.0 * latLonSeparation(prediction.landingLatitude, prediction.landingLongitude,
                                                                             targetLatitude, targetLongitude).magnitude;
-            if (errorKm > 2 * courseCorrectionsAccuracyTargetKm()) landStep = LandStep.COURSE_CORRECTIONS;
+            if (errorKm > 2 * courseCorrectionsAccuracyTargetKm())
+            {
+                landStep = LandStep.COURSE_CORRECTIONS;
+            }
+            else if (autoWarpOnDescent)
+            {
+                core.warpIncrease(this);
+            }
         }
 
         void driveKillHorizontalVelocity(FlightCtrlState s)

@@ -5,8 +5,6 @@ using MuMech;
 
 public class MuMechJebPod2 : CommandPod
 {
-    private static Transform[] defSeat = null;
-
     public enum BlinkStatus
     {
         NONE,
@@ -42,23 +40,6 @@ public class MuMechJebPod2 : CommandPod
     {
         core = new MechJebCore();
         core.part = this;
-
-        GameObject iS = GameObject.Find("internalSpace");
-        if (iS != null)
-        {
-            InternalModel m = iS.transform.FindChild("mk1pod_internal").GetComponent<InternalModel>();
-
-            if (m != null)
-            {
-                if (defSeat == null)
-                {
-                    defSeat = (Transform[])m.seats.Clone();
-                }
-
-                m.seats = new Transform[0];
-            }
-        }
-
         base.onPartAwake();
     }
 
@@ -82,19 +63,6 @@ public class MuMechJebPod2 : CommandPod
     protected override void onPartStart()
     {
         stackIcon.SetIcon(DefaultIcons.ADV_SAS);
-
-        GameObject iS = GameObject.Find("internalSpace");
-        if (iS != null)
-        {
-            InternalModel m = iS.transform.FindChild("mk1pod_internal").GetComponent<InternalModel>();
-            if (m.seats.Length == 0)
-            {
-                m.seats = defSeat;
-            }
-
-            internalModel = new InternalModel();
-        }
-
         core.part = this;
         core.onPartStart();
 

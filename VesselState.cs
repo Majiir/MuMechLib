@@ -163,12 +163,15 @@ namespace MuMech
             MoI = vessel.findLocalMOI(CoM);
             foreach (Part p in vessel.parts)
             {
-                mass += p.mass;
-                massDrag += p.mass * p.maximum_drag;
-                MoI += p.Rigidbody.inertiaTensor;
-                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.lastStage) && (p.inverseStage == Staging.lastStage))) && ((p is LiquidEngine) || (p is SolidRocket)))
+                if (p.physicalSignificance != Part.PhysicalSignificance.NONE)
                 {
-                    if (p is LiquidEngine)
+                    mass += p.mass;
+                    massDrag += p.mass * p.maximum_drag;
+                }
+                MoI += p.Rigidbody.inertiaTensor;
+                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.lastStage) && (p.inverseStage == Staging.lastStage))) && ((p is LiquidEngine) || (p is LiquidFuelEngine) || (p is SolidRocket)))
+                {
+                    if (p is LiquidEngine && ARUtils.engineHasFuel(p))
                     {
                         double usableFraction = Vector3d.Dot((p.transform.rotation * ((LiquidEngine)p).thrustVector).normalized, forward);
                         thrustAvailable += ((LiquidEngine)p).maxThrust * usableFraction;
@@ -176,6 +179,16 @@ namespace MuMech
                         if (((LiquidEngine)p).thrustVectoringCapable)
                         {
                             torqueThrustPYAvailable += Math.Sin(Math.Abs(((LiquidEngine)p).gimbalRange) * Math.PI / 180) * ((LiquidEngine)p).maxThrust * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
+                        }
+                    }
+                    else if (p is LiquidFuelEngine && ARUtils.engineHasFuel(p))
+                    {
+                        double usableFraction = Vector3d.Dot((p.transform.rotation * ((LiquidFuelEngine)p).thrustVector).normalized, forward);
+                        thrustAvailable += ((LiquidFuelEngine)p).maxThrust * usableFraction;
+                        thrustMinimum += ((LiquidFuelEngine)p).minThrust * usableFraction;
+                        if (((LiquidFuelEngine)p).thrustVectoringCapable)
+                        {
+                            torqueThrustPYAvailable += Math.Sin(Math.Abs(((LiquidFuelEngine)p).gimbalRange) * Math.PI / 180) * ((LiquidFuelEngine)p).maxThrust * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
                         }
                     }
                     else if (p is SolidRocket)

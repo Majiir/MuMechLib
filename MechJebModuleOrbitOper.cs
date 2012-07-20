@@ -5,15 +5,14 @@ using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using OrbitExtensions;
+using SharpLua.LuaTypes;
 /*
  * Todo:
  * 
- * -handle inclination properly in TRANS
- * -make small orbit adjustments more precise (redo throttle management?)
  * 
  * Changed:
  * 
- * -Reenabled SOI change callback (Fixed warp to SOI?)
+ * -changed (hopefully improved) throttle management
  * 
  */
 
@@ -22,7 +21,201 @@ namespace MuMech
 
     public class MechJebModuleOrbitOper : ComputerModule
     {
+
         public MechJebModuleOrbitOper(MechJebCore core) : base(core) { }
+
+        
+
+        public override void registerLuaMembers(LuaTable index)
+        {
+            index.Register("changePe", proxyChangePe);
+            index.Register("changeAp", proxyChangeAp);
+            index.Register("changeApAndPe", proxyChangeApAndPe);
+            index.Register("circularize", proxyCircularize);
+            index.Register("transfer", proxyTransfer);
+            index.Register("warpToEvent", proxyWarpToEvent);
+        }
+
+        public LuaValue proxyChangePe(LuaValue[] args)
+        {
+            if (args.Count() != 1) throw new Exception("changePe usage: changePe(periapsis [in meters])");
+
+            try
+            {
+                newPeA = ((LuaNumber)args[0]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("changePe: invalid periapsis");
+            }
+
+            newPeAString = (newPeA / 1000.0).ToString();
+
+            this.enabled = true;
+            core.controlClaim(this);
+            currentOperation = Operation.PERIAPSIS;
+            raisingApsis = (part.vessel.orbit.PeA < newPeA);
+
+            guiTab = Operation.PERIAPSIS;
+
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyChangeAp(LuaValue[] args)
+        {
+            if (args.Count() != 1) throw new Exception("changeAp usage: changePe(periapsis [in meters])");
+
+            try
+            {
+                newApA = ((LuaNumber)args[0]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("changeAp: invalid apoapsis");
+            }
+
+            newApAString = (newApA / 1000.0).ToString();
+
+            this.enabled = true;
+            core.controlClaim(this);
+            currentOperation = Operation.APOAPSIS;
+            raisingApsis = (part.vessel.orbit.ApR > 0 && part.vessel.orbit.ApA < newApA);
+
+            guiTab = Operation.APOAPSIS;
+
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyChangeApAndPe(LuaValue[] args)
+        {
+            if (args.Count() != 2) throw new Exception("changeAp usage: changeApAndPe(apoapsis[in meters], periapsis [in meters])");
+
+            try
+            {
+                newApA = ((LuaNumber)args[0]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("changeAp: invalid apoapsis");
+            }
+
+            try
+            {
+                newPeA = ((LuaNumber)args[1]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("changeApAndPe: invalid periapsis");
+            }
+
+            newApAString = (newApA / 1000.0).ToString();
+            newPeAString = (newPeA / 1000.0).ToString();
+
+            this.enabled = true;
+            core.controlClaim(this);
+            currentOperation = Operation.ELLIPTICIZE;
+
+            guiTab = Operation.ELLIPTICIZE;
+
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyCircularize(LuaValue[] args)
+        {
+            this.enabled = true;
+            core.controlClaim(this);
+            currentOperation = Operation.CIRCULARIZE;
+
+            guiTab = Operation.CIRCULARIZE;
+
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyTransfer(LuaValue[] args)
+        {
+            if (args.Count() != 2) throw new Exception("transfer usage: transfer(target body, final periapsis [in meters])");
+
+            try
+            {
+                foreach (CelestialBody body in part.vessel.mainBody.orbitingBodies)
+                {
+                    if (body.name.ToLower().Contains(args[0].ToString().ToLower()))
+                    {
+                        transferTarget = body;
+                        break;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                throw new Exception("transfer: invalid target body");
+            }
+
+            try
+            {
+                desiredPostTransferPeA = ((LuaNumber)args[1]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("transfer: invalid final periapsis");
+            }
+
+            desiredPostTransferPeAString = (desiredPostTransferPeA / 1000.0).ToString();
+
+            this.enabled = true;
+            core.controlClaim(this);
+            currentOperation = Operation.TRANSFER_INJECTION;
+            transState = TRANSState.WAITING_FOR_INJECTION;
+
+            guiTab = Operation.TRANSFER_INJECTION;
+
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyWarpToEvent(LuaValue[] args)
+        {
+            if (args.Count() == 0 || args.Count() > 2) throw new Exception("warpToEvent usage: warpToEvent(event) or warpToEvent(event, lead time)");
+
+            try
+            {
+                if (args[0].ToString().ToLower().Contains("pe")) warpPoint = WarpPoint.PERIAPSIS;
+                else if (args[0].ToString().ToLower().Contains("ap")) warpPoint = WarpPoint.APOAPSIS;
+                else if (args[0].ToString().ToLower().Contains("soi")) warpPoint = WarpPoint.SOI_CHANGE;
+                else throw new Exception("warpToEvent: event must be one of \"pe\", \"ap\", \"soi\"");
+            }
+            catch (Exception)
+            {
+                throw new Exception("warpToEvent: invalid event");
+            }
+
+            if (args.Count() == 2)
+            {
+                try
+                {
+                    warpTimeOffset = ((LuaNumber)args[1]).Number;
+                }
+                catch (Exception)
+                {
+                    throw new Exception("warpToEvent: invalid lead time");
+                }
+
+            }
+            else
+            {
+                warpTimeOffset = 0;
+            }
+
+            warpTimeOffsetString = warpTimeOffset.ToString();
+
+            this.enabled = true;
+            core.controlClaim(this);
+            currentOperation = Operation.WARP;
+
+            guiTab = Operation.WARP;
+
+            return LuaNil.Nil;
+        }
+
 
         public override void onControlLost()
         {
@@ -32,7 +225,7 @@ namespace MuMech
                 FlightInputHandler.SetNeutralControls();
             }
         }
-
+        
         public enum Operation
         {
             PERIAPSIS,
@@ -55,7 +248,7 @@ namespace MuMech
         public String[] warpPointStrings = new String[] { "Periapsis", "Apoapsis", "SoI switch" };
         public String[] warpPointStrings2 = new String[] { "periapsis", "apoapsis", "SoI switch" };
         WarpPoint warpPoint;
-        double[] warpLookaheadTimes = new double[] { 0, 1, 10, 20, 25, 50, 500, 5000 };
+        double[] warpLookaheadTimes = new double[] { 0, 10, 20, 25, 50, 500, 5000, 50000 };
 
         bool raisingApsis;
 
@@ -446,9 +639,7 @@ namespace MuMech
             bool endBurn;
             double managedValue = part.vessel.orbit.ApA;
             double targetValue = newApA;
-            float minThrottle = 0.01F;
 
-            if (deltaVToChangeApoapsis(newApA) > vesselState.maxThrustAccel) minThrottle = 1.0F;
             if (part.vessel.orbit.ApR < 0) targetValue = -1.0e30; //hyperbolic orbits have "negative apoapsis"
 
             if (raisingApsis)
@@ -470,7 +661,9 @@ namespace MuMech
             {
                 if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
 
-                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = manageThrottle(managedValue, targetValue, minThrottle);
+                double dVLeft = deltaVToChangeApoapsis(newApA);
+                float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
+                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = throttle;
                 else s.mainThrottle = 0.0F;
             }
         }
@@ -478,11 +671,8 @@ namespace MuMech
         void drivePeriapsis(FlightCtrlState s)
         {
             bool endBurn;
-            float minThrottle = 0.01F;
             double managedValue = part.vessel.orbit.PeA;
             double targetValue = newPeA;
-
-            if (deltaVToChangePeriapsis(newPeA + part.vessel.mainBody.Radius) > vesselState.maxThrustAccel) minThrottle = 1.0F;
 
             if (raisingApsis)
             {
@@ -503,7 +693,9 @@ namespace MuMech
             {
                 if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
 
-                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = manageThrottle(managedValue, targetValue, minThrottle);
+                double dVLeft = deltaVToChangePeriapsis(newPeA);
+                float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
+                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = throttle;
                 else s.mainThrottle = 0.0F;
             }
         }
@@ -513,13 +705,8 @@ namespace MuMech
             Vector3d circVelocityCorrection = circularizationVelocityCorrection();
             core.attitudeTo(circVelocityCorrection.normalized, MechJebCore.AttitudeReference.INERTIAL, this);
 
-            double managedValue = circVelocityCorrection.magnitude;
-            double targetValue = 0.0;
-
-            float minThrottle = 0.01F;
-            if (managedValue > vesselState.maxThrustAccel) minThrottle = 1.0F;
-
-            if (managedValue < 0.1)
+            double dVLeft = circVelocityCorrection.magnitude;
+            if (dVLeft < 0.1)
             {
                 endOperation();
             }
@@ -527,7 +714,8 @@ namespace MuMech
             {
                 if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
 
-                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = manageThrottle(managedValue, targetValue, minThrottle);
+                float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
+                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = throttle;
                 else s.mainThrottle = 0.0F;
             }
         }
@@ -538,13 +726,8 @@ namespace MuMech
             Vector3d ellVelocityCorrection = ellipticizationVelocityCorrection(newPeA, newApA);
             core.attitudeTo(ellVelocityCorrection.normalized, MechJebCore.AttitudeReference.INERTIAL, this);
 
-            double managedValue = ellVelocityCorrection.magnitude;
-            double targetValue = 0.0;
-
-            float minThrottle = 0.01F;
-            if (managedValue > vesselState.maxThrustAccel) minThrottle = 1.0F;
-
-            if (managedValue < 0.1)
+            double dVLeft = ellVelocityCorrection.magnitude;
+            if (dVLeft < 0.1)
             {
                 endOperation();
             }
@@ -552,7 +735,8 @@ namespace MuMech
             {
                 if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
 
-                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = manageThrottle(managedValue, targetValue, minThrottle);
+                float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
+                if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = throttle;
                 else s.mainThrottle = 0.0F;
             }
         }
@@ -587,13 +771,17 @@ namespace MuMech
                 return;
             }
 
-            double transferSemiMajorAxis = (vesselState.radius + transferTarget.orbit.PeR) / 2.0;
-            double transferHalfPeriod = 0.5 * 2 * Math.PI / Math.Sqrt(ARUtils.G * part.vessel.mainBody.Mass) * Math.Pow(transferSemiMajorAxis, 1.5);
+            Orbit transferOrbit = ARUtils.computeOrbit(part.vessel, deltaVToChangeApoapsis(transferTarget.orbit.PeA) * vesselState.velocityVesselOrbitUnit, vesselState.time);
 
-            Orbit targetOrbit = ARUtils.computeOrbit(transferTarget.position, transferTarget.orbit.GetVel(), part.vessel.mainBody, vesselState.time);
-            Vector3d targetArrivalPosition = targetOrbit.getAbsolutePositionAtUT(vesselState.time + transferHalfPeriod);
+            double arrivalTime = vesselState.time + transferOrbit.timeToAp;
+            Vector3d vesselArrivalPosition = transferOrbit.getAbsolutePositionAtUT(arrivalTime);
 
-            Vector3d vesselArrivalPosition = part.vessel.mainBody.position - transferTarget.orbit.PeR * vesselState.up;
+            //minus sign is there because transferTarget.orbit.GetVel() seems to be mysteriously negated
+            //when the ship is in the rotating reference frame of the original body.
+            Orbit targetOrbit = ARUtils.computeOrbit(transferTarget.position, (FlightGlobals.RefFrameIsRotating ? -1 : 1) * transferTarget.orbit.GetVel(), part.vessel.mainBody, vesselState.time);
+
+            Vector3d targetArrivalPosition = targetOrbit.getAbsolutePositionAtUT(arrivalTime);
+
             Vector3d targetPlaneNormal = Vector3d.Cross(transferTarget.position - part.vessel.mainBody.position, transferTarget.orbit.GetVel());
             Vector3d vesselArrivalPositionTargetPlane = part.vessel.mainBody.position + Vector3d.Exclude(targetPlaneNormal, vesselArrivalPosition - part.vessel.mainBody.position);
 
@@ -646,7 +834,7 @@ namespace MuMech
         }
 
         void driveTransferWaitingForCorrection(FlightCtrlState s) {
-            if(vesselState.radius < 0.5 * transferTarget.orbit.PeR) 
+            if(vesselState.radius < 0.5 * (part.vessel.orbit.PeR + part.vessel.orbit.ApR)) 
             {
                 core.warpIncrease(this, false);
             }
@@ -711,7 +899,6 @@ namespace MuMech
 
             double gradientMagnitude = Math.Sqrt(Math.Pow(separationReductions[0], 2) + Math.Pow(separationReductions[1], 2) + Math.Pow(separationReductions[2], 2));
 
-            double desiredDeltaV = intersectionSeparation.magnitude / gradientMagnitude;
             Vector3d desiredBurnDirection = (separationReductions[0] * burnDirections[0] 
                 + separationReductions[1] * burnDirections[1] 
                 + separationReductions[2] * burnDirections[2]).normalized; 
@@ -720,15 +907,19 @@ namespace MuMech
 
             if (core.attitudeAngleFromTarget() < 5)
             {
-                if (postTransferPeR == -1) s.mainThrottle = 1.0F;
-                else s.mainThrottle = manageThrottle(postTransferPeR, desiredPostTransferPeA + transferTarget.Radius, 0.01F);
+                //this is a crude guess of how much we need to burn:
+                double dVLeft;
+                if (postTransferPeR == -1) dVLeft = intersectionSeparation.magnitude / gradientMagnitude;
+                else dVLeft = (postTransferPeR - (desiredPostTransferPeA + transferTarget.Radius)) / gradientMagnitude;
+
+                float throttle = Mathf.Clamp((float)(dVLeft / (2.0 * vesselState.maxThrustAccel)), 0.02F, 1.0F);
+                s.mainThrottle = throttle;
             }
             else
             {
                 s.mainThrottle = 0.0F;
             }
         }
-
 
 
         void driveWarp(FlightCtrlState s)
@@ -759,10 +950,6 @@ namespace MuMech
                 else
                 {
                     double timeToPe = part.vessel.orbit.timeToPe;
-/*                    if (part.vessel.orbit.eccentricity > 1)
-                    {
-                        timeToPe = -part.vessel.orbit.meanAnomaly / (2 * Math.PI / part.vessel.orbit.period);
-                    }*/
 
                     if (part.vessel.orbit.eccentricity < 1)
                     {
@@ -771,7 +958,7 @@ namespace MuMech
                     }
                     else
                     {
-                        timeToTarget = timeToPe;
+                        timeToTarget = timeToPe - warpTimeOffset;
                         timeSinceTarget = 1.0e30;
                     }
                 }
@@ -792,28 +979,11 @@ namespace MuMech
         }
 
 
-        double lastManagedValue;
-        float lastThrottle = 1.0F;
-        MovingAverage managedDerivative = new MovingAverage();
-        float manageThrottle(double managedValue, double targetValue, float minThrottle)
-        {
-            if (lastThrottle != 0) managedDerivative.value = (managedValue - lastManagedValue) / (lastThrottle);
-
-            float throttle;
-            if (managedDerivative == 0) throttle = 1.0f;
-            else throttle = Mathf.Clamp((float)(0.1 * (targetValue - managedValue) / managedDerivative), minThrottle, 1.0F);
-
-            lastThrottle = throttle;
-            lastManagedValue = managedValue;
-            return throttle;
-        }
-
-
         public override void onFlightStart()
         {
             part.vessel.orbitDriver.OnReferenceBodyChange += new OrbitDriver.CelestialBodyDelegate(this.handleReferenceBodyChange);
         }
-
+        
         public void handleReferenceBodyChange(CelestialBody newBody)
         {
             endOperation();

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using UnityEngine;
 
 namespace MuMech
 {
@@ -128,10 +129,17 @@ namespace MuMech
             {
                 foreach (System.ComponentModel.PropertyDescriptor descriptor in System.ComponentModel.TypeDescriptor.GetProperties(obj))
                 {
-                    string name = descriptor.Name;
-                    object value = descriptor.GetValue(obj);
-                    tmp += pref + ((pref == "") ? "" : ".") + name + " = " + value + "\n";
-                    tmp += DumpObject(value, depth - 1, pref + ((pref == "") ? "" : ".") + name);
+                    try
+                    {
+                        string name = descriptor.Name;
+                        object value = descriptor.GetValue(obj);
+                        tmp += pref + ((pref == "") ? "" : ".") + name + " = " + value + "\n";
+                        tmp += DumpObject(value, depth - 1, pref + ((pref == "") ? "" : ".") + name);
+                    }
+                    catch (Exception e)
+                    {
+                        MonoBehaviour.print("Exception while dumping: " + e.GetType().Name + " - " + e.Message);
+                    }
                 }
             }
             return tmp;

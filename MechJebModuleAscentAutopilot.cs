@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using UnityEngine;
-
+using SharpLua.LuaTypes;
 
 /*
  * Todo:
@@ -38,6 +38,11 @@ namespace MuMech
         {
             if (mode != AscentMode.DISENGAGED)
             {
+                if (autoStage)
+                {
+                    core.autoStageDeactivate(this);
+                }
+
                 if (mode != AscentMode.ON_PAD)
                 {
                     FlightInputHandler.SetNeutralControls(); //makes sure we leave throttle at zero
@@ -50,6 +55,41 @@ namespace MuMech
         public const double BEACH_ALTITUDE = 100001.6;
         public const double BEACH_INCLINATION = 24.0;
 
+        public override void registerLuaMembers(LuaTable index)
+        {
+            index.Register("launchTo", proxyLaunchTo);
+        }
+
+        public LuaValue proxyLaunchTo(LuaValue[] args)
+        {
+            if (args.Count() != 2) throw new Exception("launchTo usage: launchTo(altitude [in meters], inclination [in degrees])");
+            
+            double orbitAltitude;
+            double orbitInclination;
+
+            try
+            {
+                orbitAltitude = ((LuaNumber)args[0]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("launchTo: invalid orbit altitude");
+            }
+
+            try
+            {
+                orbitInclination = ((LuaNumber)args[1]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("launchTo: invalid orbit inclination");
+            }
+
+            launchTo(orbitAltitude, orbitInclination);
+
+            return LuaNil.Nil;
+        }
+
         //programmatic interface to the module. 
         public void launchTo(double orbitAltitude, double orbitInclination)
         {
@@ -58,11 +98,17 @@ namespace MuMech
             desiredOrbitAltitude = orbitAltitude;
             desiredInclination = orbitInclination;
 
+            desiredOrbitAltitudeKmString = (desiredOrbitAltitude / 1000.0).ToString();
+            desiredInclinationString = desiredInclination.ToString();
+
+            //currently this only gets called from lua scripts, and the scripter probably 
+            //wants a fully automatic launch, so turn on all the auto stuff
+            autoStage = true;
+            seizeThrottle = true;
+            autoWarpToApoapsis = true;
+
             //lift off if we haven't yet:
-            if (Staging.CurrentStage == Staging.StageCount)
-            {
-                Staging.ActivateNextStage();
-            }
+            core.launch(this);
 
             mode = AscentMode.VERTICAL_ASCENT;
         }
@@ -97,7 +143,6 @@ namespace MuMech
         //things the drive code needs to remember between frames
         //double lastAccelerationTime = 0;
         //int lastAttemptedWarpIndex = 0;
-        double lastStageTime = 0;
 
         double totalDVExpended;
         double gravityLosses;
@@ -221,6 +266,17 @@ namespace MuMech
             {
                 if (_autoStage != value) core.settingsChanged = true;
                 _autoStage = value;
+                if (mode != AscentMode.DISENGAGED)
+                {
+                    if (autoStage)
+                    {
+                        core.autoStageActivate(this, autoStageDelay, autoStageLimit);
+                    }
+                    else
+                    {
+                        core.autoStageDeactivate(this);
+                    }
+                }
             }
         }
 
@@ -444,8 +500,6 @@ namespace MuMech
 
             if (mode == AscentMode.ON_PAD && Staging.CurrentStage <= Staging.lastStage) mode = AscentMode.VERTICAL_ASCENT;
 
-            driveAutoStaging();
-
             switch (mode)
             {
                 case AscentMode.VERTICAL_ASCENT:
@@ -471,33 +525,6 @@ namespace MuMech
             driveRendezvousStuff(s);
 
             driveUpdateStats(s);
-        }
-
-
-        //auto-stage when safe
-        private void driveAutoStaging()
-        {
-            //if autostage enabled, and if we are not waiting on the pad, and if we didn't immediately just fire the previous stage
-            if (autoStage && mode != AscentMode.ON_PAD && Staging.CurrentStage > 0 && Staging.CurrentStage > autoStageLimit
-                && vesselState.time - lastStageTime > autoStageDelay)
-            {
-                //don't decouple active or idle engines or tanks
-                if (!ARUtils.inverseStageDecouplesActiveOrIdleEngineOrTank(Staging.CurrentStage - 1, part.vessel))  //if staging is safe:
-                {
-                    //only fire decouplers to drop deactivated engines or tanks
-                    if (!ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel)
-                        || ARUtils.inverseStageDecouplesDeactivatedEngineOrTank(Staging.CurrentStage - 1, part.vessel))
-                    {
-                        if (ARUtils.inverseStageFiresDecoupler(Staging.CurrentStage - 1, part.vessel))
-                        {
-                            //if we decouple things, delay the next stage a bit to avoid exploding the debris
-                            lastStageTime = vesselState.time;
-                        }
-
-                        Staging.ActivateNextStage();
-                    }
-                }
-            }
         }
 
         void driveLimitOverheat(FlightCtrlState s)
@@ -766,7 +793,7 @@ namespace MuMech
 
             //if we are running physics, we can do burns if the apoapsis falls, and we can maintain our orientation in preparation for circularization
             //if our Ap is too low and we are pointing reasonably along our velocity
-            double[] lookaheadTimes = new double[] { 0, 5, 90, 90, 120, 200, 500, 5000 };
+            double[] lookaheadTimes = new double[] { 0, 40, 80, 100, 200, 500, 5000, 50000 };
 
             if (part.vessel.orbit.ApA < desiredOrbitAltitude - 10)
             {
@@ -923,6 +950,12 @@ namespace MuMech
                 {
                     initializeInternals();
                     core.controlClaim(this);
+
+                    if (autoStage)
+                    {
+                        core.autoStageActivate(this, autoStageDelay, autoStageLimit);
+                    }
+
                     mode = AscentMode.ON_PAD;
                 }
             }
@@ -1354,7 +1387,6 @@ namespace MuMech
             mode = AscentMode.DISENGAGED;
             //lastAccelerationTime = 0;
             //lastAttemptedWarpIndex = 0;
-            lastStageTime = 0;
         }
 
 
@@ -1382,13 +1414,13 @@ namespace MuMech
             updatePathTexture();
             part.vessel.orbitDriver.OnReferenceBodyChange += new OrbitDriver.CelestialBodyDelegate(this.handleReferenceBodyChange);
         }
-        
-        
+
+
         void handleReferenceBodyChange(CelestialBody body)
         {
             if (Staging.CurrentStage != Staging.StageCount) enabled = false; //if statement is needed or else this executes on restarting
         }
-        
+
 
         public override void onFlightStartAtLaunchPad() //Called when vessel is placed on the launchpad
         {
