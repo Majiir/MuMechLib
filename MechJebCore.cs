@@ -607,7 +607,7 @@ namespace MuMech
             return true;
         }
 
-        public bool thrustActivate(ComputerModule controller, float value, TMode mode = TMode.DIRECT)
+        public bool thrustActivate(ComputerModule controller, float value, TMode mode)
         {
             /*
             if ((controlModule != null) && (controller != null) && (controlModule != controller))
