@@ -4,44 +4,45 @@ using System.Linq;
 using System.Text;
 using MuMech;
 using UnityEngine;
+using SharpLua.LuaTypes;
 
 namespace MuMech
 {
-    class MechJebModuleILS : ComputerModule
+    public class MechJebModuleILS : ComputerModule
     {
-        double targetHeading;
-        String targetHeadingString = "90";
-        double targetAltitude;
-        String targetAltitudeString = "5000";
+        public double targetHeading;
+        public String targetHeadingString = "90";
+        public double targetAltitude;
+        public String targetAltitudeString = "5000";
 
-        bool holdHeadingAndAlt = false;
-        bool ilsOn = false;
-        bool autoLand = false;
-        bool loweredGear = false;
+        public bool holdHeadingAndAlt = false;
+        public bool ilsOn = false;
+        public bool autoLand = false;
+        public bool loweredGear = false;
 
-        double runwayStartLat = -0.040633;
-        double runwayStartLon = -74.6908;
-        double runwayStartAlt = 67;
-        double runwayEndLat = -0.041774;
-        double runwayEndLon = -74.5341702;
-        double runwayEndAlt = 67;
+        public double runwayStartLat = -0.040633;
+        public double runwayStartLon = -74.6908;
+        public double runwayStartAlt = 67;
+        public double runwayEndLat = -0.041774;
+        public double runwayEndLon = -74.5341702;
+        public double runwayEndAlt = 67;
 
-        double glideslope = 3;
-        String glideslopeString = "3";
+        public double glideslope = 3;
+        public String glideslopeString = "3";
 
         NavBall navball;
 
         GameObject waypoint = new GameObject();
         Transform defaultPurpleWaypoint;
 
-        double leftSpeed;
-        double leftDisplacement;
-        double horizontalDistanceToRunway;
-        double flightPathAngleToRunway;
-        double flightPathAngle;
-        Vector3d runwayStart;
-        Vector3d runwayEnd;
-        Vector3d runwayDir;
+        public double leftSpeed;
+        public double leftDisplacement;
+        public double horizontalDistanceToRunway;
+        public double flightPathAngleToRunway;
+        public double flightPathAngle;
+        public Vector3d runwayStart;
+        public Vector3d runwayEnd;
+        public Vector3d runwayDir;
 
         private bool _minimized = false;
         public bool minimized
@@ -68,6 +69,72 @@ namespace MuMech
             settings["ILS_minimized"].value_bool = minimized;
 
             base.onSaveGlobalSettings(settings);
+        }
+
+        public override void registerLuaMembers(LuaTable index)
+        {
+            index.Register("ilsHold", proxyHold);
+            index.Register("ilsLand", proxyLand);
+        }
+
+        public LuaValue proxyHold(LuaValue[] args)
+        {
+            if (args.Count() != 2) throw new Exception("ilsHold usage: ilsHold(altitude [in meters], heading [in degrees])");
+
+            double altitude;
+            double heading;
+
+            try
+            {
+                altitude = ((LuaNumber)args[0]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("ilsHold: invalid altitude");
+            }
+
+            try
+            {
+                heading = ((LuaNumber)args[1]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("ilsHold: invalid heading");
+            }
+
+            hold(altitude, heading);
+
+            return LuaNil.Nil;
+        }
+
+        public LuaValue proxyLand(LuaValue[] args)
+        {
+            land();
+
+            return LuaNil.Nil;
+        }
+
+        public void hold(double altitude, double heading)
+        {
+            this.enabled = true;
+            targetHeading = heading;
+            targetAltitude = altitude;
+            targetHeadingString = targetHeading.ToString();
+            targetAltitudeString = targetAltitude.ToString();
+            autoLand = false;
+            holdHeadingAndAlt = true;
+            ilsOn = true;
+            core.controlClaim(this);
+        }
+
+        public void land()
+        {
+            this.enabled = true;
+            autoLand = true;
+            holdHeadingAndAlt = false;
+            ilsOn = true;
+            loweredGear = false;
+            core.controlClaim(this);
         }
 
         protected override void WindowGUI(int windowID)
@@ -222,13 +289,13 @@ namespace MuMech
             }
         }
 
-        double stableAoA = 0; //we average AoA over time to get an estimate of what pitch will produce what FPA
-        double pitchCorrection = 0; //we average (commanded pitch - actual pitch) over time in order to fix this offset in our commands
-        float maxYaw = 10.0F;
-        float maxRoll = 10.0F;
-        float maxPitchCorrection = 5.0F;
-        double AoAtimeConstant = 2.0;
-        double pitchCorrectionTimeConstant = 15.0;
+        public double stableAoA = 0; //we average AoA over time to get an estimate of what pitch will produce what FPA
+        public double pitchCorrection = 0; //we average (commanded pitch - actual pitch) over time in order to fix this offset in our commands
+        public float maxYaw = 10.0F;
+        public float maxRoll = 10.0F;
+        public float maxPitchCorrection = 5.0F;
+        public double AoAtimeConstant = 2.0;
+        public double pitchCorrectionTimeConstant = 15.0;
         void aimVelocityVector(double desiredFpa, double desiredHeading)
         {
             //horizontal control

@@ -157,7 +157,7 @@ namespace MuMech
 
         public override void drawGUI(int baseWindowID)
         {
-            if (goToBeach && (part.vessel.rootPart.moduleCrew.Count > 0))
+            if (goToBeach && (part.vessel.rootPart.protoModuleCrew.Count > 0))
             {
                 if (bubble == null)
                 {
@@ -166,9 +166,7 @@ namespace MuMech
                     txt.alignment = TextAnchor.MiddleCenter;
                     bubble = new SpeechBubble(txt);
                 }
-                bubble.drawBubble(new Vector2(part.vessel.rootPart.moduleCrew[0].screenPos.x + (part.vessel.rootPart.moduleCrew[0].avatarSize / 2), part.vessel.rootPart.moduleCrew[0].screenPos.y), "Let's go to the beach!", Color.white);
-                part.vessel.rootPart.moduleCrew[0].panicLevel = 0;
-                part.vessel.rootPart.moduleCrew[0].wheeeLevel = 1;
+                bubble.drawBubble(new Vector2(part.vessel.rootPart.protoModuleCrew[0].KerbalRef.screenPos.x + (part.vessel.rootPart.protoModuleCrew[0].KerbalRef.avatarSize / 2), part.vessel.rootPart.protoModuleCrew[0].KerbalRef.screenPos.y), "Let's go to the beach!", Color.white);
             }
         }
 

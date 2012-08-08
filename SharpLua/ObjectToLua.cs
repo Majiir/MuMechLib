@@ -19,12 +19,16 @@ namespace SharpLua
     /// </summary>
     public class ObjectToLua
     {
-        
+
         private static void SetPropertyValue(object obj, object value, PropertyInfo propertyInfo)
         {
             if (propertyInfo.PropertyType.FullName == "System.Int32")
             {
                 propertyInfo.SetValue(obj, (int)(double)value, null);
+            }
+            else if (propertyInfo.PropertyType.FullName == "System.Single")
+            {
+                propertyInfo.SetValue(obj, Convert.ToSingle(value), null);
             }
             else if (propertyInfo.PropertyType.IsEnum)
             {
@@ -45,38 +49,67 @@ namespace SharpLua
                 propertyInfo.SetValue(obj, value, null);
             }
         }
-        
-        private static void SetMemberValue(object control, Type type, string member, object value)
+
+        private static void SetFieldValue(object obj, object value, FieldInfo fieldInfo)
         {
-            PropertyInfo propertyInfo = type.GetProperty(member);
-            if (propertyInfo != null)
+            if (fieldInfo.FieldType.FullName == "System.Int32")
             {
-                SetPropertyValue(control, value, propertyInfo);
+                fieldInfo.SetValue(obj, (int)(double)value);
+            }
+            else if (fieldInfo.FieldType.FullName == "System.Single")
+            {
+                fieldInfo.SetValue(obj, Convert.ToSingle(value));
+            }
+            else if (fieldInfo.FieldType.IsEnum)
+            {
+                object enumValue = Enum.Parse(fieldInfo.FieldType, (string)value);
+                fieldInfo.SetValue(obj, enumValue);
             }
             else
             {
-                EventInfo eventInfo = type.GetEvent(member);
-                if (eventInfo != null)
+                fieldInfo.SetValue(obj, value);
+            }
+        }
+
+        private static void SetMemberValue(object control, Type type, string member, object value)
+        {
+            UnityEngine.MonoBehaviour.print("Trying to set " + type.FullName + " - " + member + " to (" + value.GetType().FullName + ") " + value.ToString());
+
+            PropertyInfo propertyInfo = type.GetProperty(member);
+            if (propertyInfo != null)
+            {
+                UnityEngine.MonoBehaviour.print("Type: Property - " + propertyInfo.PropertyType.FullName);
+                SetPropertyValue(control, value, propertyInfo);
+                return;
+            }
+            FieldInfo fieldInfo = type.GetField(member);
+            if (fieldInfo != null)
+            {
+                UnityEngine.MonoBehaviour.print("Type: Field - " + fieldInfo.FieldType.FullName);
+                SetFieldValue(control, value, fieldInfo);
+                return;
+            }
+            EventInfo eventInfo = type.GetEvent(member);
+            if (eventInfo != null)
+            {
+                switch (eventInfo.EventHandlerType.FullName)
                 {
-                    switch (eventInfo.EventHandlerType.FullName)
-                    {
-                        case "System.EventHandler":
-                            eventInfo.AddEventHandler(control, new EventHandler((sender, e) =>
-                                                                                {
-                                                                                    (value as LuaFunc).Invoke(new LuaValue[] { new LuaUserdata(sender), new LuaUserdata(e) });
-                                                                                }));
-                            break;
-                        /*
-                        case "System.Windows.Forms.TreeViewEventHandler":
-                            eventInfo.AddEventHandler(control, new TreeViewEventHandler((sender, e) =>
-                                                                                        {
-                                                                                            (value as LuaFunc).Invoke(new LuaValue[] { new LuaUserdata(sender), new LuaUserdata(e) });
-                                                                                        }));
-                            break;
-                        */
-                        default:
-                            throw new NotImplementedException(eventInfo.EventHandlerType.FullName + " type not implemented.");
-                    }
+                    case "System.EventHandler":
+                        eventInfo.AddEventHandler(control, new EventHandler((sender, e) =>
+                                                                            {
+                                                                                (value as LuaFunc).Invoke(new LuaValue[] { new LuaUserdata(sender), new LuaUserdata(e) });
+                                                                            }));
+                        break;
+                    /*
+                    case "System.Windows.Forms.TreeViewEventHandler":
+                        eventInfo.AddEventHandler(control, new TreeViewEventHandler((sender, e) =>
+                                                                                    {
+                                                                                        (value as LuaFunc).Invoke(new LuaValue[] { new LuaUserdata(sender), new LuaUserdata(e) });
+                                                                                    }));
+                        break;
+                    */
+                    default:
+                        throw new NotImplementedException(eventInfo.EventHandlerType.FullName + " type not implemented.");
                 }
             }
         }
@@ -161,9 +194,13 @@ namespace SharpLua
         {
             if ((value as LuaValue) != null)
                 return value as LuaValue;
-            if (value is int || value is double)
+            if (value is int || value is double || value is float)
             {
                 return new LuaNumber(Convert.ToDouble(value));
+            }
+            else if (value is MuMech.MovingAverage)
+            {
+                return new LuaNumber(((MuMech.MovingAverage)value).value);
             }
             else if (value is string)
             {

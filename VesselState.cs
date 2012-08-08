@@ -169,7 +169,7 @@ namespace MuMech
                     massDrag += p.mass * p.maximum_drag;
                 }
                 MoI += p.Rigidbody.inertiaTensor;
-                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.lastStage) && (p.inverseStage == Staging.lastStage))) && ((p is LiquidEngine) || (p is LiquidFuelEngine) || (p is SolidRocket)))
+                if (((p.State == PartStates.ACTIVE) || ((Staging.CurrentStage > Staging.lastStage) && (p.inverseStage == Staging.lastStage))) && ((p is LiquidEngine) || (p is LiquidFuelEngine) || (p is SolidRocket) || (p is AtmosphericEngine)))
                 {
                     if (p is LiquidEngine && ARUtils.engineHasFuel(p))
                     {
@@ -196,6 +196,15 @@ namespace MuMech
                         double usableFraction = Vector3d.Dot((p.transform.rotation * ((SolidRocket)p).thrustVector).normalized, forward);
                         thrustAvailable += ((SolidRocket)p).thrust * usableFraction;
                         thrustMinimum += ((SolidRocket)p).thrust * usableFraction;
+                    }
+                    else if (p is AtmosphericEngine && ARUtils.engineHasFuel(p))
+                    {
+                        double usableFraction = Vector3d.Dot((p.transform.rotation * ((AtmosphericEngine)p).thrustVector).normalized, forward);
+                        thrustAvailable += ((AtmosphericEngine)p).maximumEnginePower * ((AtmosphericEngine)p).totalEfficiency * usableFraction;
+                        if (((AtmosphericEngine)p).thrustVectoringCapable)
+                        {
+                            torqueThrustPYAvailable += Math.Sin(Math.Abs(((AtmosphericEngine)p).gimbalRange) * Math.PI / 180) * ((AtmosphericEngine)p).maximumEnginePower * ((AtmosphericEngine)p).totalEfficiency * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
+                        }
                     }
                 }
                 if ((!FlightInputHandler.RCSLock) && (p is RCSModule))

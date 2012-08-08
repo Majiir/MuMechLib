@@ -105,6 +105,7 @@ namespace MuMech
         public static SettingsManager settings = null;
         public bool settingsLoaded = false;
         public bool settingsChanged = false;
+        public int settingsVersion = 0;
         public bool gamePaused = false;
         public bool firstDraw = true;
         public float stress = 0;
@@ -114,7 +115,6 @@ namespace MuMech
         private bool tmode_changed = false;
         private Vector3d integral = Vector3d.zero;
         private Vector3d prev_err = Vector3d.zero;
-        private Vector3 act = Vector3.zero;
         private Vector3d k_integral = Vector3d.zero;
         private Vector3d k_prev_err = Vector3d.zero;
         private double t_integral = 0;
@@ -128,7 +128,7 @@ namespace MuMech
         public float r_Kp = 0;
         public float r_Ki = 0;
         public float r_Kd = 0;
-        public float Damping = 3.0F;
+        public double drive_factor = 450.0F;
 
         public float trans_spd_act = 0;
         public float trans_prev_thrust = 0;
@@ -219,6 +219,10 @@ namespace MuMech
                     targetChanged = true;
                     if (attitudeReference == AttitudeReference.TARGET)
                     {
+                        if (value == TargetType.NONE)
+                        {
+                            attitudeDeactivate(null);
+                        }
                         attitudeChanged = true;
                     }
                 }
@@ -273,6 +277,8 @@ namespace MuMech
             }
         }
 
+        public double attitudeError;
+
         // Auto Staging
         protected double lastStageTime = 0;
         public bool autoStage = false;
@@ -312,7 +318,7 @@ namespace MuMech
 
         public void saveSettings()
         {
-            if (!settingsLoaded)
+            if (!settingsLoaded || (settingsVersion != settings.version))
             {
                 return;
             }
@@ -325,13 +331,14 @@ namespace MuMech
             settings["main_windowProgr"].value_decimal = main_windowProgr;
             settings.save();
             settingsChanged = false;
+            settingsVersion = settings.version;
         }
 
         public void loadSettings()
         {
             if (settings == null)
             {
-                settings = new SettingsManager(KSPUtil.ApplicationRootPath + "MuMech/MechJeb.cfg");
+                settings = new SettingsManager("MechJeb.cfg");
             }
 
             foreach (ComputerModule module in modules)
@@ -342,6 +349,7 @@ namespace MuMech
             main_windowProgr = (float)settings["main_windowProgr"].value_decimal;
             settingsChanged = false;
             settingsLoaded = true;
+            settingsVersion = settings.version;
         }
 
         public void onFlightStateSave(Dictionary<string, KSPParseable> partDataCollection)
@@ -376,7 +384,7 @@ namespace MuMech
 
         private void onFlyByWire(FlightCtrlState s)
         {
-            if ((part.vessel != FlightGlobals.ActiveVessel) || (allJebs[part.vessel].controller != this))
+            if ((part.vessel != FlightGlobals.ActiveVessel) || !allJebs.ContainsKey(part.vessel) || (allJebs[part.vessel].controller != this))
             {
                 return;
             }
@@ -526,7 +534,7 @@ namespace MuMech
         //angle in degrees between the vessel's current pointing direction and the attitude target, ignoring roll
         public double attitudeAngleFromTarget()
         {
-            return Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward));
+            return attitudeError;
         }
         public float distanceFromTarget()
         {
@@ -599,8 +607,40 @@ namespace MuMech
             return true;
         }
 
+        public bool thrustActivate(ComputerModule controller, float value, TMode mode = TMode.DIRECT)
+        {
+            /*
+            if ((controlModule != null) && (controller != null) && (controlModule != controller))
+            {
+                return false;
+            }
+            */
+            trans_spd_act = value;
+            tmode = mode;
 
-        public bool warpIncrease(ComputerModule controller, bool instant = true, double maxRate = 100000.0)
+            return true;
+        }
+
+        public bool thrustDeactivate(ComputerModule controller)
+        {
+            /*
+            if ((controlModule != null) && (controller != null) && (controlModule != controller))
+            {
+                return false;
+            }
+            */
+
+            if (tmode == TMode.OFF)
+            {
+                return true;
+            }
+
+            tmode = TMode.OFF;
+
+            return true;
+        }
+
+        public bool warpIncrease(ComputerModule controller, bool instant = true, double maxRate = 10000.0)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller)) return false;
 
@@ -728,6 +768,19 @@ namespace MuMech
             }
 
             return false;
+        }
+
+        public bool stage(ComputerModule controller)
+        {
+            if ((controlModule != null) && (controller != null) && (controlModule != controller))
+            {
+                return false;
+            }
+
+            lastStageTime = vesselState.time;
+            Staging.ActivateNextStage();
+
+            return true;
         }
 
         private void drive(FlightCtrlState s)
@@ -872,9 +925,7 @@ namespace MuMech
                 double t_act = (t_Kp * t_err) + (t_Ki * t_integral) + (t_Kd * t_deriv);
                 t_prev_err = t_err;
 
-                double int_error = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0;
-
-                if ((tmode != TMode.KEEP_VERTICAL) || !trans_kill_h || (int_error < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (int_error < 90)))
+                if ((tmode != TMode.KEEP_VERTICAL) || !trans_kill_h || (attitudeError < 2) || ((Math.Min(vesselState.altitudeASL, vesselState.altitudeTrue) < 1000) && (attitudeError < 90)))
                 {
                     if (tmode == TMode.DIRECT)
                     {
@@ -887,7 +938,7 @@ namespace MuMech
                 }
                 else
                 {
-                    if ((int_error >= 2) && (vesselState.torqueThrustPYAvailable > vesselState.torquePYAvailable * 10))
+                    if ((attitudeError >= 2) && (vesselState.torqueThrustPYAvailable > vesselState.torquePYAvailable * 10))
                     {
                         trans_prev_thrust = s.mainThrottle = 0.1F;
                     }
@@ -917,6 +968,7 @@ namespace MuMech
                 Vector3d deltaEuler = new Vector3d((delta.eulerAngles.x > 180) ? (delta.eulerAngles.x - 360.0F) : delta.eulerAngles.x, -((delta.eulerAngles.y > 180) ? (delta.eulerAngles.y - 360.0F) : delta.eulerAngles.y), (delta.eulerAngles.z > 180) ? (delta.eulerAngles.z - 360.0F) : delta.eulerAngles.z);
                 Vector3d err = deltaEuler * Math.PI / 180.0F;
                 Vector3d torque = new Vector3d(vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle, vesselState.torqueRAvailable, vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle);
+                /*
                 if ((int_error < Math.Min(0.1, precision / 10.0)) && (Math.Abs(deltaEuler.y) < Math.Min(0.5, precision / 2.0)))
                 {
                     Kp = Ki = Kd = 0;
@@ -929,16 +981,19 @@ namespace MuMech
                 }
                 else
                 {
+                */
                     Kp = 10000;
                     Ki = Kd = 0;
                     Vector3d inertia = Vector3d.Scale(MuUtils.Sign(vesselState.angularMomentum) * 1.1, Vector3d.Scale(Vector3d.Scale(vesselState.angularMomentum, vesselState.angularMomentum), MuUtils.Invert(Vector3d.Scale(torque, vesselState.MoI))));
                     err += MuUtils.Reorder(inertia, 132);
-                }
+                //}
                 err.Scale(Vector3d.Scale(vesselState.MoI, MuUtils.Invert(torque)));
+
+                float drive_limit = Mathf.Clamp01((float)(err.magnitude * drive_factor / precision));
 
                 integral += err * TimeWarp.fixedDeltaTime;
                 Vector3d deriv = (err - prev_err) / TimeWarp.fixedDeltaTime;
-                act = Kp * err + Ki * integral + Kd * deriv;
+                Vector3 act = Kp * err + Ki * integral + Kd * deriv;
                 prev_err = err;
 
                 if (userCommanding != 0)
@@ -966,7 +1021,8 @@ namespace MuMech
                 }
                 else
                 {
-                    if (!double.IsNaN(act.z)) s.roll = Mathf.Clamp(s.roll + act.z, -1.0F, 1.0F);
+                    if (!double.IsNaN(act.z)) s.roll = Mathf.Clamp(s.roll + act.z, -drive_limit, drive_limit);
+                    
                 }
                 if ((userCommanding & 3) > 0)
                 {
@@ -975,8 +1031,8 @@ namespace MuMech
                 }
                 else
                 {
-                    if (!double.IsNaN(act.x)) s.pitch = Mathf.Clamp(s.pitch + act.x, -1.0F, 1.0F);
-                    if (!double.IsNaN(act.y)) s.yaw = Mathf.Clamp(s.yaw + act.y, -1.0F, 1.0F);
+                    if (!double.IsNaN(act.x)) s.pitch = Mathf.Clamp(s.pitch + act.x, -drive_limit, drive_limit);
+                    if (!double.IsNaN(act.y)) s.yaw = Mathf.Clamp(s.yaw + act.y, -drive_limit, drive_limit);
                 }
                 stress = Mathf.Min(Mathf.Abs(act.x), 1.0F) + Mathf.Min(Mathf.Abs(act.y), 1.0F) + Mathf.Min(Mathf.Abs(act.z), 1.0F);
             }
@@ -1034,7 +1090,7 @@ namespace MuMech
         private void drawGUI()
         {
 
-            if ((part.State != PartStates.DEAD) && (part.vessel == FlightGlobals.ActiveVessel) && (allJebs[part.vessel].controller == this) && !gamePaused)
+            if ((part.State != PartStates.DEAD) && (part.vessel == FlightGlobals.ActiveVessel) && allJebs.ContainsKey(part.vessel) && (allJebs[part.vessel].controller == this) && !gamePaused)
             {
                 GUI.skin = HighLogic.Skin;
 
@@ -1120,7 +1176,7 @@ namespace MuMech
             modules.Add(new MechJebModuleLandingAutopilot(this));
             modules.Add(new MechJebModuleAscentAutopilot(this));
             modules.Add(new MechJebModuleOrbitOper(this));
-            //modules.Add(new MechJebModuleRendezvous(this));
+            modules.Add(new MechJebModuleRendezvous(this));
             modules.Add(new MechJebModuleILS(this));
 
             //modules.Add(new MechJebModuleOrbitPlane(this));
@@ -1166,6 +1222,10 @@ namespace MuMech
             {
                 saveSettings();
             }
+            if (settingsVersion != settings.version)
+            {
+                loadSettings();
+            }
 
             if ((part == null))
             {
@@ -1178,12 +1238,6 @@ namespace MuMech
                 return;
             }
 
-            if (((part.vessel.rootPart is Decoupler) || (part.vessel.rootPart is DecouplerGUI) || (part.vessel.rootPart is RadialDecoupler)) && part.vessel.rootPart.gameObject.layer != 2)
-            {
-                print("Disabling collision with decoupler...");
-                EditorLogic.SetLayerRecursive(part.vessel.rootPart.gameObject, 2);
-            }
-
             if (part.vessel.orbit.objectType != Orbit.ObjectType.VESSEL)
             {
                 part.vessel.orbit.objectType = Orbit.ObjectType.VESSEL;
@@ -1194,18 +1248,8 @@ namespace MuMech
                 List<Part> tmp = new List<Part>(part.vessel.parts);
                 foreach (Part p in tmp)
                 {
-                    if ((p is Decoupler) || (p is DecouplerGUI) || (p is RadialDecoupler))
-                    {
-                        print("Disabling collision with decoupler...");
-                        EditorLogic.SetLayerRecursive(p.gameObject, 2);
-                    }
-                }
-
-                tmp = new List<Part>(part.vessel.parts);
-                foreach (Part p in tmp)
-                {
                     p.isConnected = true;
-                    if (p.State == PartStates.IDLE)
+                    if (p.State == PartStates.DEACTIVATED)
                     {
                         p.force_activate();
                     }
@@ -1226,6 +1270,7 @@ namespace MuMech
             if (allJebs[part.vessel].controller == this)
             {
                 allJebs[part.vessel].state.Update(part.vessel);
+                attitudeError = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0; ;
                 vesselState = allJebs[part.vessel].state;
 
                 foreach (ComputerModule module in modules)
@@ -1307,7 +1352,6 @@ namespace MuMech
                 }
                 integral = Vector3.zero;
                 prev_err = Vector3.zero;
-                act = Vector3.zero;
 
                 print("MechJeb resetting PID controller.");
                 attitudeChanged = false;
@@ -1461,12 +1505,12 @@ namespace MuMech
                 }
                 if (Input.GetKeyDown(KeyCode.Keypad1))
                 {
-                    Damping += (float)calibrationDeltas[calibrationDelta];
+                    drive_factor += (float)calibrationDeltas[calibrationDelta];
                     printk = true;
                 }
                 if (Input.GetKeyDown(KeyCode.Keypad0))
                 {
-                    Damping -= (float)calibrationDeltas[calibrationDelta];
+                    drive_factor -= (float)calibrationDeltas[calibrationDelta];
                     printk = true;
                 }
                 if (printk)
@@ -1474,7 +1518,7 @@ namespace MuMech
                     switch (calibrationTarget)
                     {
                         case 0:
-                            print("Kp = " + Kp + " - Ki = " + Ki + " - Kd = " + Kd + " - Damp = " + Damping);
+                            print("Kp = " + Kp + " - Ki = " + Ki + " - Kd = " + Kd + " - drive_factor = " + drive_factor);
                             break;
                         case 1:
                             print("r_Kp = " + r_Kp + " - r_Ki = " + r_Ki + " - r_Kd = " + r_Kd);
@@ -1679,6 +1723,23 @@ namespace MuMech
             }
         }
 
+        public ComputerModule getModule(string module)
+        {
+            foreach (ComputerModule m in modules)
+            {
+                if ((m.GetType().Name.ToLowerInvariant() == module.ToLowerInvariant()) || (m.GetType().Name.ToLowerInvariant() == "mechjebmodule"+module.ToLowerInvariant()))
+                {
+                    return m;
+                }
+            }
+            return null;
+        }
+
+        public LuaValue proxyGetModule(LuaValue[] arg)
+        {
+            return ObjectToLua.ToLuaValue(getModule((arg.Count() > 0) ? arg[0].ToString() : ""));
+        }
+
         public LuaValue proxyControlClaim(LuaValue[] arg)
         {
             return LuaBoolean.From(controlClaim(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : false));
@@ -1836,6 +1897,27 @@ namespace MuMech
             return LuaBoolean.From(landDeactivate(autom8));
         }
 
+        public LuaValue proxyThrustActivate(LuaValue[] arg)
+        {
+            TMode t = TMode.DIRECT;
+            if ((arg.Count() > 1) && (arg[1] is LuaString)) {
+                try
+                {
+                    t = (TMode)Enum.Parse(typeof(TMode), arg[1].ToString(), true);
+                }
+                catch (Exception)
+                {
+                    throw new Exception("thrustActivate: invalid mode");
+                }
+            }
+            return LuaBoolean.From(thrustActivate(autom8, ((arg.Count() > 0) && (arg[0] is LuaNumber)) ? (float)(arg[0] as LuaNumber).Number : 0, t));
+        }
+
+        public LuaValue proxyThrustDeactivate(LuaValue[] arg)
+        {
+            return LuaBoolean.From(thrustDeactivate(autom8));
+        }
+
         public LuaValue proxyWarpIncrease(LuaValue[] arg)
         {
             return LuaBoolean.From(warpIncrease(autom8, (arg.Count() > 0) ? arg[0].GetBooleanValue() : true, ((arg.Count() > 1) && (arg[1] is LuaNumber)) ? (arg[1] as LuaNumber).Number : 10000));
@@ -1874,6 +1956,11 @@ namespace MuMech
             return LuaBoolean.From(launch(autom8));
         }
 
+        public LuaValue proxyStage(LuaValue[] arg)
+        {
+            return LuaBoolean.From(stage(autom8));
+        }
+
         public LuaValue proxyGetAttitudeActive(LuaValue[] arg)
         {
             return LuaBoolean.From(attitudeActive);
@@ -1896,6 +1983,8 @@ namespace MuMech
 
         public void registerLuaMembers(LuaTable index)
         {
+            index.Register("getModule", proxyGetModule);
+
             index.Register("controlClaim", proxyControlClaim);
             index.Register("controlRelease", proxyControlRelease);
             index.Register("attitudeGetReferenceRotation", proxyAttitudeGetReferenceRotation);
@@ -1910,6 +1999,8 @@ namespace MuMech
             //index.Register("setTarget", proxySetTarget);
             index.Register("landActivate", proxyLandActivate);
             index.Register("landDeactivate", proxyLandDeactivate);
+            index.Register("thrustActivate", proxyThrustActivate);
+            index.Register("thrustDeactivate", proxyThrustDeactivate);
             index.Register("warpIncrease", proxyWarpIncrease);
             index.Register("warpDecrease", proxyWarpDecrease);
             index.Register("warpMinimum", proxyWarpMinimum);
@@ -1917,12 +2008,15 @@ namespace MuMech
             index.Register("autoStageActivate", proxyAutoStageActivate);
             index.Register("autoStageDeactivate", proxyAutoStageDeactivate);
             index.Register("launch", proxyLaunch);
+            index.Register("stage", proxyStage);
 
             index.Register("getAttitudeActive", proxyGetAttitudeActive);
             index.Register("getControlClaimed", proxyGetControlClaimed);
 
             index.Register("busy", proxyBusy);
             index.Register("free", proxyFree);
+
+            index.SetNameValue("core", ObjectToLua.ToLuaValue(this));
 
             foreach (ComputerModule m in modules)
             {

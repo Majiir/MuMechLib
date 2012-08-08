@@ -37,6 +37,10 @@ namespace MuMech
                     {
                         thrust += ((SolidRocket)p).thrust;
                     }
+                    if (p is AtmosphericEngine)
+                    {
+                        thrust += throttle * ((AtmosphericEngine)p).maximumEnginePower * ((AtmosphericEngine)p).totalEfficiency;
+                    }
                 }
             }
 
@@ -70,7 +74,7 @@ namespace MuMech
 
         public static bool hasIdleEngineDescendant(Part p)
         {
-            if ((p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine || p is LiquidFuelEngine)) return true;
+            if ((p.State == PartStates.IDLE) && (p is SolidRocket || p is LiquidEngine || p is LiquidFuelEngine || p is AtmosphericEngine)) return true;
             foreach (Part child in p.children)
             {
                 if (hasIdleEngineDescendant(child)) return true;
@@ -82,7 +86,7 @@ namespace MuMech
         public static bool hasActiveOrIdleEngineOrTankDescendant(Part p)
         {
             if ((p.State == PartStates.ACTIVE || p.State == PartStates.IDLE)
-                && (p is SolidRocket || (p is LiquidEngine && engineHasFuel(p)) || (p is LiquidFuelEngine && engineHasFuel(p)))) return true;
+                && (p is SolidRocket || (p is LiquidEngine && engineHasFuel(p)) || (p is LiquidFuelEngine && engineHasFuel(p)) || (p is AtmosphericEngine && engineHasFuel(p)))) return true;
             if ((p is FuelTank) && ((FuelTank)p).fuel > 0) return true;
             foreach (Part child in p.children)
             {
@@ -94,8 +98,8 @@ namespace MuMech
         //detect if a part is above a deactivated engine or fuel tank
         public static bool hasDeactivatedEngineOrTankDescendant(Part p)
         {
-            if ((p.State == PartStates.DEACTIVATED) && (p is SolidRocket || p is LiquidEngine || p is LiquidFuelEngine || p is FuelTank)) return true;
-            if (((p is LiquidEngine) || (p is LiquidFuelEngine)) && !engineHasFuel(p)) return true;
+            if ((p.State == PartStates.DEACTIVATED) && (p is SolidRocket || p is LiquidEngine || p is LiquidFuelEngine || p is AtmosphericEngine || p is FuelTank)) return true;
+            if (((p is LiquidEngine) || (p is LiquidFuelEngine) || (p is AtmosphericEngine)) && !engineHasFuel(p)) return true;
             foreach (Part child in p.children)
             {
                 if (hasDeactivatedEngineOrTankDescendant(child)) return true;

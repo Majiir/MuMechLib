@@ -140,7 +140,7 @@ namespace MuMech
             int minStage = Staging.lastStage;
             foreach (Part child in part.vessel.parts)
             {
-                if ((child is LiquidEngine) || (child is LiquidFuelEngine) || (child is SolidRocket))
+                if ((child is LiquidEngine) || (child is LiquidFuelEngine) || (child is SolidRocket) || (child is AtmosphericEngine))
                 {
                     if (child.inverseStage < minStage)
                     {

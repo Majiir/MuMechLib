@@ -61,7 +61,6 @@ namespace MuMech
             mechjeb = new LuaTable();
             core.registerLuaMembers(mechjeb);
             luaEnv.SetNameValue("mechjeb", mechjeb);
-            luaEnv.SetNameValue("mj", ObjectToLua.ToLuaValue(core));
             luaEnv.SetNameValue("vessel", ObjectToLua.ToLuaValue(vesselState));
         }
 

@@ -229,6 +229,11 @@ namespace MuMech
                 }
             }
 
+            if (mode != Mode.OFF)
+            {
+                GUILayout.Label("Steering err: " + core.attitudeError.ToString("F1") + "°", GUILayout.ExpandWidth(true));
+            }
+
             GUILayout.EndVertical();
 
             base.WindowGUI(windowID);

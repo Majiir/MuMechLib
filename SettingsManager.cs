@@ -183,9 +183,6 @@ namespace MuMech
             return value_vector;
         }
 
-
-
-
         public string save()
         {
             return (int)type + "," + raw;
@@ -224,6 +221,7 @@ namespace MuMech
     {
         public string saveFile;
         public Dictionary<string, Setting> settings;
+        public int version = 0;
 
         public SettingsManager(string file)
         {
@@ -271,6 +269,7 @@ namespace MuMech
                     }
                 }
             }
+            version++;
         }
 
         public void save()
@@ -284,6 +283,7 @@ namespace MuMech
                 }
                 KSP.IO.File.WriteAllText<MechJebCore>(tmp.ToString(), saveFile);
             }
+            version++;
         }
     }
 }

@@ -113,7 +113,7 @@ namespace SharpLua.Library
                 args2.Add(args[i].Value);
             string n, m;
             n = method.Substring(0, method.LastIndexOf("."));
-            m = method.Substring(method.LastIndexOf("."));
+            m = method.Substring(method.LastIndexOf(".") + 1);
             AssemblyCache.ImportNamespace(n);
             Type t = AssemblyCache.FindType(n);
             if (t == null)
