@@ -70,7 +70,7 @@ public class MuMechJebPod : CommandPod
         brain.transform.parent = transform.Find("model");
         brain.transform.localPosition = new Vector3(0, 0.2F, 0);
         brain.transform.localRotation = Quaternion.identity;
-
+        
         brain.AddComponent<Light>();
         brain.light.color = XKCDColors.ElectricBlue;
         brain.light.intensity = 0;

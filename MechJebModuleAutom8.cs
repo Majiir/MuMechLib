@@ -53,6 +53,19 @@ namespace MuMech
             line = "";
         }
 
+        public void runScript(string script)
+        {
+            try
+            {
+                LuaRuntime.GlobalEnvironment = luaEnv;
+                LuaRuntime.Run(script, luaEnv);
+            }
+            catch (Exception e)
+            {
+                log += e.GetType().Name + ": " + e.Message + "\n";
+            }
+        }
+
         public MechJebModuleAutom8(MechJebCore core)
             : base(core)
         {

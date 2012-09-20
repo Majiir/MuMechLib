@@ -34,6 +34,7 @@ namespace MuMech
         {
             index.Register("land", proxyLand);
             index.Register("landAt", proxyLandAt);
+            index.Register("setLanding", proxySetLanding);
         }
 
         public LuaValue proxyLand(LuaValue[] args)
@@ -134,6 +135,48 @@ namespace MuMech
                 landStep = LandStep.DEORBIT_BURN;
                 deorbiting = false;
             }
+        }
+
+        public LuaValue proxySetLanding(LuaValue[] args)
+        {
+            if (args.Count() < 2)
+            {
+                throw new Exception("setLanding usage: setLanding(latitude, longitude)");
+            }
+
+            double argLatitude;
+            double argLongitude;
+
+            try
+            {
+                argLatitude = ((LuaNumber)args[0]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("landAt: invalid latitude");
+            }
+
+            try
+            {
+                argLongitude = ((LuaNumber)args[1]).Number;
+            }
+            catch (Exception)
+            {
+                throw new Exception("landAt: invalid longitude");
+            }
+
+            setLanding(argLatitude, argLongitude);
+            return LuaNil.Nil;
+        }
+
+        public void setLanding(double latitude, double longitude)
+        {
+            targetLatitude = latitude;
+            targetLongitude = longitude;
+            initializeDecimalStrings();
+            initializeDMSStrings();
+
+            if (targetLatitude == BEACH_LATITUDE && targetLongitude == BEACH_LONGITUDE) dmsInput = false;
         }
 
         public override void onModuleDisabled()
@@ -335,7 +378,6 @@ namespace MuMech
                         String mouseCoordString;
                         if (dmsInput) mouseCoordString = dmsLocationString(mouseLatitude, mouseLongitude, true);
                         else mouseCoordString = String.Format("{0:0.000}° N\n {1:0.000}° E", mouseLatitude, mouseLongitude);
-                        GUILayout.Label(mouseCoordString);
 
                         GUI.Label(new Rect(Input.mousePosition.x + 15, Screen.height - Input.mousePosition.y, 500, 500), mouseCoordString, ARUtils.labelStyle(Color.yellow));
                     }
@@ -348,10 +390,10 @@ namespace MuMech
         protected bool getMouseCoordinates(out double mouseLatitude, out double mouseLongitude)
         {
             Ray mouseRay = planetariumCamera.camera.ScreenPointToRay(Input.mousePosition);
-            mouseRay.origin = mouseRay.origin / Planetarium.InverseScaleFactor;
+            //mouseRay.origin = mouseRay.origin / Planetarium.InverseScaleFactor; // TODO: FIX THIS
             Vector3d relOrigin = mouseRay.origin - part.vessel.mainBody.position;
             Vector3d relSurfacePosition;
-            if (PQS.LineSphereIntersection(relOrigin, mouseRay.direction, part.vessel.mainBody.Radius, out relSurfacePosition))
+            if (part.vessel.mainBody.pqsController.RayIntersection(relOrigin, PlanetariumCamera.fetch.pivotRotation * (Quaternion)Planetarium.Rotation * mouseRay.direction, out relSurfacePosition))
             {
                 Vector3d surfacePoint = part.vessel.mainBody.position + relSurfacePosition;
                 mouseLatitude = part.vessel.mainBody.GetLatitude(surfacePoint);
@@ -492,19 +534,18 @@ namespace MuMech
                     if (GUILayout.Button("W", compassToggleStyle, GUILayout.Width(25.0F))) dmsEast = true;
                 }
             }
-
-
+            
             GUILayout.EndHorizontal();
-
-
+            
             GUIStyle normalStyle = new GUIStyle(GUI.skin.button);
             GUIStyle greenStyle = ARUtils.buttonStyle(Color.green);
-
+            GUIStyle grayStyle = ARUtils.buttonStyle(Color.gray);
 
             GUILayout.BeginHorizontal();
 
             if (gettingMapTarget && !MapView.MapIsEnabled) gettingMapTarget = false;
-            gettingMapTarget = GUILayout.Toggle(gettingMapTarget, "Select target on map", (gettingMapTarget ? greenStyle : normalStyle));
+            //gettingMapTarget = GUILayout.Toggle(gettingMapTarget, "Select target on map", (gettingMapTarget ? greenStyle : normalStyle));
+            GUILayout.Button("Select target on map", grayStyle);
             if (gettingMapTarget && !MapView.MapIsEnabled) MapView.EnterMapView();
 
             if (part.vessel.mainBody.name.Equals("Kerbin") && GUILayout.Button("Target KSC"))
@@ -534,8 +575,7 @@ namespace MuMech
 
             GUILayout.EndHorizontal();
 
-
-
+            GUILayout.Label("\"Select target on map\" currently broken due to\nPlanetarium changes in 0.17 :-( Will fix ASAP");
 
             switch (prediction.outcome)
             {

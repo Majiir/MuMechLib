@@ -330,10 +330,10 @@ namespace MuMech
             if (navball == null) navball = (NavBall)GameObject.FindObjectOfType(typeof(NavBall));
             if (navball != null)
             {
-                if (navball.waypointTarget != waypoint.transform)
+                if (navball.target != waypoint.transform)
                 {
-                    defaultPurpleWaypoint = navball.waypointTarget; //save the usual waypoint
-                    navball.waypointTarget = waypoint.transform;
+                    defaultPurpleWaypoint = navball.target; //save the usual waypoint
+                    navball.target = waypoint.transform;
                 }
             }
         }
@@ -342,9 +342,9 @@ namespace MuMech
         {
             if (navball != null)
             {
-                if (navball.waypointTarget == waypoint.transform)
+                if (navball.target == waypoint.transform)
                 {
-                    navball.waypointTarget = defaultPurpleWaypoint;
+                    navball.target = defaultPurpleWaypoint;
                 }
             }
         }

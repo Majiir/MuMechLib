@@ -804,7 +804,7 @@ namespace MuMech
                 }
             }
 
-            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)
+            if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate))
             {
                 return;
             }
@@ -1192,6 +1192,8 @@ namespace MuMech
             {
                 module.onPartStart();
             }
+
+            part.Events.Add(new BaseEvent("MechJebLua", MechJebLua));
         }
 
         public void onFlightStart()
@@ -1249,7 +1251,7 @@ namespace MuMech
                 foreach (Part p in tmp)
                 {
                     p.isConnected = true;
-                    if (p.State == PartStates.DEACTIVATED)
+                    if ((p.State == PartStates.DEACTIVATED) && !(p is Decoupler || p is RadialDecoupler || p is DecouplerGUI))
                     {
                         p.force_activate();
                     }
@@ -2022,6 +2024,11 @@ namespace MuMech
             {
                 m.registerLuaMembers(index);
             }
+        }
+
+        public void MechJebLua(BaseEventData data)
+        {
+            autom8.runScript(data.GetString("script"));
         }
 
         static void print(String s)

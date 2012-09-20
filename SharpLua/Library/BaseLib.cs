@@ -365,11 +365,22 @@ namespace SharpLua.Library
                     throw new Exception("wait: object '" + args[0] + "' is not a number or function!");
                 }
 
-                while (!cond.Invoke(null).GetBooleanValue())
+                bool condOK = false;
+                while (!condOK)
                 {
-                    System.Threading.Thread.Sleep(100);
+                    try 
+	                {
+                        condOK = cond.Invoke(null).GetBooleanValue();
+	                }
+	                catch (Exception e)
+	                {
+                        A8Console.WriteLine("Exception on wait: " + e.GetType().Name + " - " + e.Message);
+	                }
+                    if (!condOK)
+                    {
+                        System.Threading.Thread.Sleep(100);
+                    }
                 }
-
             }
             else
             {

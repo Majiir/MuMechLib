@@ -1097,7 +1097,7 @@ namespace MuMech
 
             if (((core.targetType == MechJebCore.TargetType.NONE) || (FlightGlobals.activeTarget != part.vessel)) && waypointHijacked)
             {
-                navball.waypointTarget = defaultPurpleWaypoint;
+                navball.target = defaultPurpleWaypoint;
                 waypointHijacked = false;
             }
 
@@ -1109,11 +1109,11 @@ namespace MuMech
                     {
                         navball = (NavBall)GameObject.FindObjectOfType(typeof(NavBall));
                     }
-                    defaultPurpleWaypoint = navball.waypointTarget;
+                    defaultPurpleWaypoint = navball.target;
 
                     waypointHijacked = true;
                 }
-                navball.waypointTarget = (core.targetType == MechJebCore.TargetType.VESSEL) ? core.targetVessel.transform : core.targetBody.transform;
+                navball.target = (core.targetType == MechJebCore.TargetType.VESSEL) ? core.targetVessel.transform : core.targetBody.transform;
             }
 
             if (Mode == UIMode.SYNC)
