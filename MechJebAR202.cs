@@ -61,7 +61,7 @@ public class MuMechJebAR202 : MuMechPart
             if (t.name.Equals("light_red")) redLightTransform = t;
         }
 
-        if (greenLightTransform != null)
+        if ((greenLightTransform != null) && (greenLightTransform.light == null))
         {
             originalLensShader = greenLightTransform.renderer.material.shader;
             greenLight = greenLightTransform.gameObject.AddComponent<Light>();
@@ -73,7 +73,11 @@ public class MuMechJebAR202 : MuMechPart
             greenLight.color = Color.green;
             greenLight.range = 1.5F;
         }
-        if (redLightTransform != null)
+        else
+        {
+            greenLight = greenLightTransform.light;
+        }
+        if ((redLightTransform != null) && (redLightTransform.light == null))
         {
             originalLensShader = redLightTransform.renderer.material.shader;
             redLight = redLightTransform.gameObject.AddComponent<Light>();
@@ -84,6 +88,10 @@ public class MuMechJebAR202 : MuMechPart
             redLight.enabled = false;
             redLight.color = Color.red;
             redLight.range = 1.5F;
+        }
+        else
+        {
+            redLight = redLightTransform.light;
         }
     }
 

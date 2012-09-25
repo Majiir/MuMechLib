@@ -390,10 +390,10 @@ namespace MuMech
         protected bool getMouseCoordinates(out double mouseLatitude, out double mouseLongitude)
         {
             Ray mouseRay = planetariumCamera.camera.ScreenPointToRay(Input.mousePosition);
-            //mouseRay.origin = mouseRay.origin / Planetarium.InverseScaleFactor; // TODO: FIX THIS
+            mouseRay.origin = ScaledSpace.ScaledToLocalSpace(mouseRay.origin);
             Vector3d relOrigin = mouseRay.origin - part.vessel.mainBody.position;
             Vector3d relSurfacePosition;
-            if (part.vessel.mainBody.pqsController.RayIntersection(relOrigin, PlanetariumCamera.fetch.pivotRotation * (Quaternion)Planetarium.Rotation * mouseRay.direction, out relSurfacePosition))
+            if (PQS.LineSphereIntersection(relOrigin, mouseRay.direction, part.vessel.mainBody.Radius, out relSurfacePosition))
             {
                 Vector3d surfacePoint = part.vessel.mainBody.position + relSurfacePosition;
                 mouseLatitude = part.vessel.mainBody.GetLatitude(surfacePoint);
@@ -539,13 +539,11 @@ namespace MuMech
             
             GUIStyle normalStyle = new GUIStyle(GUI.skin.button);
             GUIStyle greenStyle = ARUtils.buttonStyle(Color.green);
-            GUIStyle grayStyle = ARUtils.buttonStyle(Color.gray);
 
             GUILayout.BeginHorizontal();
 
             if (gettingMapTarget && !MapView.MapIsEnabled) gettingMapTarget = false;
-            //gettingMapTarget = GUILayout.Toggle(gettingMapTarget, "Select target on map", (gettingMapTarget ? greenStyle : normalStyle));
-            GUILayout.Button("Select target on map", grayStyle);
+            gettingMapTarget = GUILayout.Toggle(gettingMapTarget, "Select target on map", (gettingMapTarget ? greenStyle : normalStyle));
             if (gettingMapTarget && !MapView.MapIsEnabled) MapView.EnterMapView();
 
             if (part.vessel.mainBody.name.Equals("Kerbin") && GUILayout.Button("Target KSC"))
@@ -574,8 +572,6 @@ namespace MuMech
             }
 
             GUILayout.EndHorizontal();
-
-            GUILayout.Label("\"Select target on map\" currently broken due to\nPlanetarium changes in 0.17 :-( Will fix ASAP");
 
             switch (prediction.outcome)
             {
@@ -876,7 +872,7 @@ namespace MuMech
 
             if (deorbiting)
             {
-                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+                if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpMinimum(this);
 
                 Vector3d desiredVelocity = finalHorizontalSpeed * freefallEndHorizontalToTarget + currentVerticalSpeed * vesselState.up;
                 Vector3d velocityChange = desiredVelocity - vesselState.velocityVesselOrbit;
@@ -1055,7 +1051,7 @@ namespace MuMech
             //we aren't right next to the ground but our speed is near or above the nominal deceleration speed
             //for the current altitude
 
-            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpPhysics(this);
+            if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpPhysics(this);
 
             //for atmosphere landings, let the air decelerate us
             if (part.vessel.mainBody.maxAtmosphereAltitude > 0)
@@ -1198,7 +1194,7 @@ namespace MuMech
 
         void runSimulations()
         {
-            if (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate &&
+            if (((TimeWarp.WarpMode == TimeWarp.Modes.LOW) || (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate)) &&
                     (nextSimulationDelayMs == 0 || nextSimulationTimer.ElapsedMilliseconds > nextSimulationDelayMs))
             {
                 Stopwatch s = Stopwatch.StartNew();
@@ -1579,13 +1575,7 @@ namespace MuMech
                 if (t > initialT + 1000)
                 {
                     result.outcome = LandingPrediction.Outcome.TIMED_OUT;
-                    print("MechJeb landing simulation timed out:");
-                    print("current ship altitude ASL = " + vesselState.altitudeASL);
-                    print("freefall end altitude ASL = " + initialAltitude);
-                    print("freefall end position = " + initialPos);
-                    print("freefall end vel = " + initialVel);
-                    print("timeout position = " + pos);
-                    print("timeout altitude ASL = " + altitudeASL);
+                    print("MechJeb landing simulation timed out:\ncurrent ship altitude ASL = " + vesselState.altitudeASL + "\nfreefall end altitude ASL = " + initialAltitude + "\nfreefall end position = " + initialPos + "\nfreefall end vel = " + initialVel + "\ntimeout position = " + pos + "\ntimeout altitude ASL = " + altitudeASL);
                     return result;
                 }
             }

@@ -561,7 +561,7 @@ namespace MuMech
             if (mode == AscentMode.ON_PAD && timeIgnitionForRendezvous && rendezvousTarget != null)
             {
                 double phaseAngle = ARUtils.clampDegrees(vesselState.longitude - part.vessel.mainBody.GetLongitude(rendezvousTarget.transform.position));
-                double[] warpLookaheadTimes = new double[] { 10, 15, 20, 25, 50, 100, 1000, 10000 };
+                double[] warpLookaheadTimes = new double[] { 10, 12.5, 15, 25, 50, 500, 10000, 100000 };
 
                 double angleDifference = ARUtils.clampDegrees(phaseAngle - predictedLaunchPhaseAngle);
                 double angleRate = 360.0 / rendezvousTarget.orbit.period - 360 / part.vessel.mainBody.rotationPeriod;
@@ -793,11 +793,11 @@ namespace MuMech
 
             //if we are running physics, we can do burns if the apoapsis falls, and we can maintain our orientation in preparation for circularization
             //if our Ap is too low and we are pointing reasonably along our velocity
-            double[] lookaheadTimes = new double[] { 0, 40, 80, 100, 200, 500, 5000, 50000 };
+            double[] lookaheadTimes = new double[] { 0, 32.5, 35, 50, 75, 500, 10000, 100000 };
 
             if (part.vessel.orbit.ApA < desiredOrbitAltitude - 10)
             {
-                if (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate)
+                if ((TimeWarp.WarpMode == TimeWarp.Modes.LOW) || (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate))
                 {
                     //lastAccelerationTime = vesselState.time;
                     core.attitudeTo(Vector3.forward, MechJebCore.AttitudeReference.ORBIT, this);
@@ -872,7 +872,7 @@ namespace MuMech
                 s.mainThrottle = 0.0F;
                 turnOffSteering();
                 core.controlRelease(this);
-                if (!showStats) enabled = false;
+                //if (!showStats) enabled = false;
                 return;
             }
 
@@ -965,7 +965,7 @@ namespace MuMech
                 if (GUILayout.Button("Disengage", s))
                 {
                     core.controlRelease(this);
-                    enabled = false;
+                    //enabled = false;
                 }
             }
 
@@ -1418,7 +1418,7 @@ namespace MuMech
 
         void handleReferenceBodyChange(CelestialBody body)
         {
-            if (Staging.CurrentStage != Staging.StageCount) enabled = false; //if statement is needed or else this executes on restarting
+            // if (Staging.CurrentStage != Staging.StageCount) enabled = false; //if statement is needed or else this executes on restarting
         }
 
 

@@ -138,15 +138,27 @@ namespace SharpLua
                                        {
                                            mi = null;
                                            foreach (MethodInfo m in miarr)
+                                           {
                                                if (m.Name == member)
-                                                   if (mi.GetGenericArguments().Length == args.Length)
-                                                    mi = m;
-
-                                           List<object> args2 = new List<object>();
-                                           foreach (LuaValue v in args)
-                                               args2.Add(v.Value);
-                                           object result = mi.Invoke(control, args2.ToArray());
-                                           return ToLuaValue(result);
+                                               {
+                                                   if (m.GetGenericArguments().Length == args.Length)
+                                                   {
+                                                       mi = m;
+                                                   }
+                                               }
+                                           }
+                                           if (mi != null)
+                                           {
+                                               List<object> args2 = new List<object>();
+                                               foreach (LuaValue v in args)
+                                                   args2.Add(v.Value);
+                                               object result = mi.Invoke(control, args2.ToArray());
+                                               return ToLuaValue(result);
+                                           }
+                                           else
+                                           {
+                                               throw new Exception(string.Format("Cannot get {0}  with {2} arguments from {1}", member, control, args.Length));
+                                           }
                                        });
             }
             

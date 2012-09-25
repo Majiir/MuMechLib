@@ -7,10 +7,12 @@ namespace MuMech
 {
     public class MuUtils
     {
-        public static string ToSI(double d, int digits = 3)
+        public static string ToSI(double d, int digits = 3, int MinMagnitude = 0, int MaxMagnitude = int.MaxValue)
         {
-            double exponent = Math.Log10(Math.Abs(d));
-            if (Math.Abs(d) >= 1)
+            float exponent = (float)Math.Log10(Math.Abs(d));
+            exponent = Mathf.Clamp(exponent, (float)MinMagnitude, (float)MaxMagnitude);
+
+            if (exponent >= 0)
             {
                 switch ((int)Math.Floor(exponent))
                 {
@@ -50,7 +52,7 @@ namespace MuMech
                         return (d / 1e24).ToString("F" + digits) + "Y";
                 }
             }
-            else if (Math.Abs(d) > 0)
+            else if (exponent < 0)
             {
                 switch ((int)Math.Floor(exponent))
                 {

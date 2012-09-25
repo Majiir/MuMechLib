@@ -240,7 +240,7 @@ namespace MuMech
         Operation currentOperation = Operation.NONE;
         Operation guiTab = Operation.PERIAPSIS;
         public String[] guiTabStrings = new String[] { "PE", "AP", "AP+PE", "CIRC", "TRANS", "WARP" };
-        public String[] guiTitleStrings = new String[] { "Change periapsis", "Change apoapsis", "Change both apsides", "Cirularize", "Transfer injection", "Time warp" };
+        public String[] guiTitleStrings = new String[] { "Change periapsis", "Change apoapsis", "Change both apsides", "Circularize", "Transfer injection", "Time warp" };
         bool showHelpWindow = false;
         Vector2 helpScrollPosition = new Vector2();
 
@@ -248,7 +248,7 @@ namespace MuMech
         public String[] warpPointStrings = new String[] { "Periapsis", "Apoapsis", "SoI switch" };
         public String[] warpPointStrings2 = new String[] { "periapsis", "apoapsis", "SoI switch" };
         WarpPoint warpPoint;
-        double[] warpLookaheadTimes = new double[] { 0, 10, 20, 25, 50, 500, 5000, 50000 };
+        double[] warpLookaheadTimes = new double[] { 0, 2.5, 5, 25, 50, 500, 10000, 100000 };
 
         bool raisingApsis;
 
@@ -456,7 +456,28 @@ namespace MuMech
 
                         foreach (CelestialBody body in part.vessel.mainBody.orbitingBodies)
                         {
-                            if (GUILayout.Button(String.Format("Transfer to " + body.name + " (Δv ≈ {0:0} m/s)", deltaVToChangeApoapsis(body.orbit.PeA))))
+                            double deltaV = deltaVToChangeApoapsis(body.orbit.PeA);
+                            Orbit transferOrbit = ARUtils.computeOrbit(part.vessel, deltaV * vesselState.velocityVesselOrbitUnit, vesselState.time);
+                            double arrivalTime = vesselState.time + transferOrbit.timeToAp;
+                            Vector3d vesselArrivalPosition = transferOrbit.getAbsolutePositionAtUT(arrivalTime);
+                            Orbit targetOrbit = ARUtils.computeOrbit(body.position, (FlightGlobals.RefFrameIsRotating ? -1 : 1) * body.orbit.GetVel(), part.vessel.mainBody, vesselState.time);
+                            Vector3d targetArrivalPosition = targetOrbit.getAbsolutePositionAtUT(arrivalTime);
+                            Vector3d targetPlaneNormal = Vector3d.Cross(body.position - part.vessel.mainBody.position, body.orbit.GetVel());
+                            Vector3d vesselArrivalPositionTargetPlane = part.vessel.mainBody.position + Vector3d.Exclude(targetPlaneNormal, vesselArrivalPosition - part.vessel.mainBody.position);
+                            double angleOffset = Math.Abs(Vector3d.Angle(targetArrivalPosition - part.vessel.mainBody.position, vesselArrivalPositionTargetPlane - part.vessel.mainBody.position));
+
+                            if (
+                                    Math.Abs(Vector3d.Angle(vesselState.velocityVesselOrbitUnit, targetArrivalPosition - part.vessel.mainBody.position)) <
+                                    Math.Abs(Vector3d.Angle(vesselState.velocityVesselOrbitUnit * -1, targetArrivalPosition - part.vessel.mainBody.position))
+                                )
+                            {
+                                angleOffset = 360.0 - angleOffset; //if we have passed the transfer point then give the user the time to loop back around the long way
+                            }
+
+                            angleOffset = Math.Max(angleOffset - 1.0, 0.0); //give us a 1 degree window
+                            double timeOffset = Math.Abs(angleOffset) / 360 * part.vessel.orbit.period;
+
+                            if (GUILayout.Button(String.Format("Transfer point to " + body.name + " in {1:0} s (Δv ≈ {0:0} m/s)", deltaV, MuUtils.ToSI(timeOffset, 1))))
                             {
                                 core.controlClaim(this);
                                 currentOperation = Operation.TRANSFER_INJECTION;
@@ -659,7 +680,7 @@ namespace MuMech
             }
             else
             {
-                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+                if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpMinimum(this);
 
                 double dVLeft = deltaVToChangeApoapsis(newApA);
                 float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
@@ -691,7 +712,7 @@ namespace MuMech
             }
             else
             {
-                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+                if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpMinimum(this);
 
                 double dVLeft = deltaVToChangePeriapsis(newPeA);
                 float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
@@ -712,7 +733,7 @@ namespace MuMech
             }
             else
             {
-                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+                if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpMinimum(this);
 
                 float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
                 if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = throttle;
@@ -733,7 +754,7 @@ namespace MuMech
             }
             else
             {
-                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+                if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpMinimum(this);
 
                 float throttle = Mathf.Clamp((float)(dVLeft / (0.5 * vesselState.maxThrustAccel)), 0.0F, 1.0F);
                 if (core.attitudeAngleFromTarget() < 5) s.mainThrottle = throttle;
@@ -791,7 +812,7 @@ namespace MuMech
             if (Math.Abs(angleOffset) < 1)
             {
                 transState = TRANSState.INJECTING;
-                if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+                if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpMinimum(this);
             }
             else
             {
@@ -825,7 +846,7 @@ namespace MuMech
                 return;
             }
 
-            if (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate) core.warpMinimum(this);
+            if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && (TimeWarp.CurrentRate > TimeWarp.MaxPhysicsRate)) core.warpMinimum(this);
 
             core.attitudeTo(Vector3d.forward, MechJebCore.AttitudeReference.ORBIT, this);
 

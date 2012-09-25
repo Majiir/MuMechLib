@@ -59,7 +59,13 @@ namespace MuMech
 
             double TWR = vesselState.thrustAvailable / (vesselState.mass * part.vessel.mainBody.gravParameter / Math.Pow(part.vessel.mainBody.Radius, 2));
             GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
-            GUILayout.Label("TWR", GUILayout.ExpandWidth(true));
+            GUILayout.Label("Surface TWR", GUILayout.ExpandWidth(true));
+            GUILayout.Label(TWR.ToString("F2"), txtR);
+            GUILayout.EndHorizontal();
+
+            TWR = vesselState.thrustAvailable / (vesselState.mass * part.vessel.mainBody.gravParameter / Math.Pow(part.vessel.mainBody.Radius + vesselState.altitudeASL, 2));
+            GUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
+            GUILayout.Label("Current TWR", GUILayout.ExpandWidth(true));
             GUILayout.Label(TWR.ToString("F2"), txtR);
             GUILayout.EndHorizontal();
 

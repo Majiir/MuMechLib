@@ -10,6 +10,8 @@ namespace MuMech
     {
         public MechJebModuleOrbitInfo(MechJebCore core) : base(core) { }
 
+        public bool showingRetrograde = false;
+
         public override string getName()
         {
             return "Orbital Information";
@@ -17,7 +19,7 @@ namespace MuMech
 
         public override GUILayoutOption[] windowOptions()
         {
-            return new GUILayoutOption[] { GUILayout.Width((core.targetType != MechJebCore.TargetType.NONE)?300:200) };
+            return new GUILayoutOption[] { GUILayout.Width((core.targetType != MechJebCore.TargetType.NONE)?310:210) };
         }
 
         protected override void WindowGUI(int windowID)
@@ -39,6 +41,11 @@ namespace MuMech
             GUILayout.Label("Inclination", GUILayout.ExpandWidth(true));
             GUILayout.Label("Eccentricity", GUILayout.ExpandWidth(true));
             GUILayout.Label("Semimajor Axis", GUILayout.ExpandWidth(true));
+            GUILayout.Label(showingRetrograde ? "Angle to Retrograde" : "Angle to Prograde", GUILayout.ExpandWidth(true));
+            if ((Event.current.type == EventType.repaint) && GUILayoutUtility.GetLastRect().Contains(Event.current.mousePosition) && Input.GetMouseButtonDown(0))
+            {
+                showingRetrograde = !showingRetrograde;
+            }
             GUILayout.EndVertical();
 
             GUILayout.BeginVertical();
@@ -62,6 +69,7 @@ namespace MuMech
             GUILayout.Label(vesselState.orbitInclination.ToString("F6") + "°");
             GUILayout.Label(vesselState.orbitEccentricity.ToString("F6"));
             GUILayout.Label(MuUtils.ToSI(vesselState.orbitSemiMajorAxis) + "m");
+            GUILayout.Label(ARUtils.clampDegrees360(vesselState.angleToPrograde + (showingRetrograde?180:0)).ToString("F3") + "°");
             GUILayout.EndVertical();
 
             if (core.targetType != MechJebCore.TargetType.NONE)
@@ -87,6 +95,7 @@ namespace MuMech
                 GUILayout.Label(core.targetOrbit().inclination.ToString("F6") + "°");
                 GUILayout.Label(core.targetOrbit().eccentricity.ToString("F6"));
                 GUILayout.Label(MuUtils.ToSI(core.targetOrbit().semiMajorAxis) + "m");
+                GUILayout.Label("");
                 GUILayout.EndVertical();
             }
 

@@ -194,7 +194,7 @@ public class MuMechModuleHullCamera : PartModule
             }
         }
         
-        if (adjustMode && (currentCamera == this)) {
+        if ((currentCamera == this) && adjustMode) {
             if (Input.GetKeyUp(KeyCode.Keypad8))
             {
                 cameraPosition += cameraUp * 0.1f;

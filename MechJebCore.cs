@@ -119,7 +119,30 @@ namespace MuMech
         private Vector3d k_prev_err = Vector3d.zero;
         private double t_integral = 0;
         private double t_prev_err = 0;
-        public float Kp = 10000.0F;
+
+        //Variables for driveAttitude
+        float inertiaFactor = 1.8F; //level of effect inertia has
+        float attitudeErrorMinAct = 1.0F; //sets the floor of the attitude error being modified by the error percentage
+        float attitudeErrorMaxAct = 3.0F; //sets the ceiling of the attitude error being modified by the error percentage
+        float reduceZfactor = 18.0F; //reduces z by this factor, z seems to act far too high in relation to x and y
+        float activationDelay = 3.0F; //lessens the act for this many seconds, control goes from 0 to full using a squared formula
+
+
+        //Array for averaging out the act value - size of array determintes how many frames to average out
+        private Vector3d[] a_avg_act = new Vector3d[2];
+
+        //Rapid toggle/resting variables
+        private int restFrameTolerance = 90; //How many frames to use for detecting the rapid toggle
+        private int[] rapidToggleX = { 0, 0, 0, 0 }; //Array size determines how many toggles required to trigger the axis rest, init array to 0s
+        private int[] rapidToggleY = { 0, 0, 0, 0 }; //Negative values indicate the vector was at the minimum threshold
+        private int[] rapidToggleZ = { 0, 0, 0, 0 };
+        private int rapidRestX = 0; //How long the axis should rest for if rapid toggle is detected
+        private int rapidRestY = 0;
+        private int rapidRestZ = 0;
+        private int rapidToggleRestFactor = 8; //Factor the axis is divided by if the rapid toggle resting is activated
+
+        public float Kp = 120.0F; //not sure what Kp is exactly, but it is effectly a multiplyer for the acting force, at Kp = 10000 the force was clamped at either -1 or +1 the majority of the time
+
         public float Ki = 0.0F;
         public float Kd = 0.0F;
         public float t_Kp = 0.05F;
@@ -300,19 +323,7 @@ namespace MuMech
             }
         }
 
-        private float _main_windowProgr;
-        protected float main_windowProgr
-        {
-            get { return _main_windowProgr; }
-            set
-            {
-                if (_main_windowProgr != value)
-                {
-                    _main_windowProgr = value;
-                    settingsChanged = true;
-                }
-            }
-        }
+        protected float main_windowProgr;
 
         public string version = "";
 
@@ -425,7 +436,7 @@ namespace MuMech
 
         public Quaternion attitudeGetReferenceRotation(AttitudeReference reference)
         {
-            Vector3d fwd;
+            Vector3 fwd, up;
             Quaternion rotRef = Quaternion.identity;
             switch (reference)
             {
@@ -443,11 +454,15 @@ namespace MuMech
                     break;
                 case AttitudeReference.TARGET:
                     fwd = (((targetType == TargetType.VESSEL) ? (Vector3d)targetVessel.transform.position : targetBody.position) - vesselState.CoM).normalized;
-                    rotRef = Quaternion.LookRotation(fwd, Vector3d.Cross(fwd, vesselState.leftOrbit));
+                    up = Vector3d.Cross(fwd, vesselState.leftOrbit);
+                    Vector3.OrthoNormalize(ref fwd, ref up);
+                    rotRef = Quaternion.LookRotation(fwd, up);
                     break;
                 case AttitudeReference.RELATIVE_VELOCITY:
                     fwd = (vesselState.velocityVesselOrbit - ((targetType == TargetType.VESSEL) ? targetVessel.orbit.GetVel() : targetBody.orbit.GetVel())).normalized;
-                    rotRef = Quaternion.LookRotation(fwd, Vector3d.Cross(fwd, vesselState.leftOrbit));
+                    up = Vector3d.Cross(fwd, vesselState.leftOrbit);
+                    Vector3.OrthoNormalize(ref fwd, ref up);
+                    rotRef = Quaternion.LookRotation(fwd, up);
                     break;
                 case AttitudeReference.TARGET_ORIENTATION:
                     switch (targetType)
@@ -493,14 +508,17 @@ namespace MuMech
         {
             bool ok = false;
             double ang_diff = Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, attitudeGetReferenceRotation(reference) * direction));
+            Vector3 up, dir = direction;
             if (!attitudeActive || (ang_diff > 45))
             {
-                ok = attitudeTo(Quaternion.LookRotation(direction, attitudeWorldToReference(-part.vessel.transform.forward, reference)), reference, controller);
+                up = attitudeWorldToReference(-part.vessel.transform.forward, reference);
             }
             else
             {
-                ok = attitudeTo(Quaternion.LookRotation(direction, attitudeWorldToReference(attitudeReferenceToWorld(attitudeTarget * Vector3d.up, attitudeReference), reference)), reference, controller);
+                up = attitudeWorldToReference(attitudeReferenceToWorld(attitudeTarget * Vector3d.up, attitudeReference), reference);
             }
+            Vector3.OrthoNormalize(ref dir, ref up);
+            ok = attitudeTo(Quaternion.LookRotation(dir, up), reference, controller);
             if (ok)
             {
                 _attitudeRollMatters = false;
@@ -640,13 +658,20 @@ namespace MuMech
             return true;
         }
 
-        public bool warpIncrease(ComputerModule controller, bool instant = true, double maxRate = 10000.0)
+        public bool warpIncrease(ComputerModule controller, bool instant = false, double maxRate = 100000.0)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller)) return false;
 
             //need to use instantaneous altitude and not the time-averaged vesselState.altitudeASL,
             //because the game freaks out really hard if you try to violate the altitude limits
             double instantAltitudeASL = (vesselState.CoM - part.vessel.mainBody.position).magnitude - part.vessel.mainBody.Radius;
+
+            if ((TimeWarp.WarpMode == TimeWarp.Modes.LOW) && ((instantAltitudeASL > part.vessel.mainBody.maxAtmosphereAltitude) || part.vessel.Landed))
+            {
+                warpIncreaseAttemptTime = vesselState.time;
+                TimeWarp.SetRate(0, instant);
+                return true;
+            }
 
 
             //conditions to increase warp:
@@ -660,6 +685,7 @@ namespace MuMech
                 && (TimeWarp.CurrentRate == 0 || timeWarp.warpRates[TimeWarp.CurrentRateIndex] == TimeWarp.CurrentRate)
                 && timeWarp.warpRates[TimeWarp.CurrentRateIndex + 1] <= maxRate
                 && (instantAltitudeASL > part.vessel.mainBody.maxAtmosphereAltitude
+                    || TimeWarp.WarpMode == TimeWarp.Modes.LOW
                     || timeWarp.warpRates[TimeWarp.CurrentRateIndex + 1] <= TimeWarp.MaxPhysicsRate
                     || part.vessel.Landed)
                 && (instantAltitudeASL > timeWarp.altitudeLimits[TimeWarp.CurrentRateIndex + 1] * part.vessel.mainBody.Radius
@@ -676,7 +702,7 @@ namespace MuMech
             }
         }
 
-        public void warpDecrease(ComputerModule controller, bool instant = true)
+        public void warpDecrease(ComputerModule controller, bool instant = false)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller)) return;
 
@@ -687,18 +713,18 @@ namespace MuMech
             }
         }
 
-        public void warpMinimum(ComputerModule controller, bool instant = true)
+        public void warpMinimum(ComputerModule controller, bool instant = false)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller)) return;
-
+            if (TimeWarp.CurrentRateIndex <= 0) return; //Somehow setting TimeWarp.SetRate to 0 when already at 0 causes unexpected rapid separation (Kracken)
             TimeWarp.SetRate(0, instant);
         }
 
-        public void warpPhysics(ComputerModule controller, bool instant = true)
+        public void warpPhysics(ComputerModule controller, bool instant = false)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller)) return;
 
-            if (timeWarp.warpRates[TimeWarp.CurrentRateIndex] <= TimeWarp.MaxPhysicsRate)
+            if ((TimeWarp.WarpMode == TimeWarp.Modes.LOW) || (timeWarp.warpRates[TimeWarp.CurrentRateIndex] <= TimeWarp.MaxPhysicsRate))
             {
                 return;
             }
@@ -710,18 +736,19 @@ namespace MuMech
             }
         }
 
-        public void warpTo(ComputerModule controller, double timeLeft, double[] lookaheadTimes, double maxRate = 10000.0)
+        public void warpTo(ComputerModule controller, double timeLeft, double[] lookaheadTimes, double maxRate = 100000.0)
         {
             if ((controlModule != null) && (controller != null) && (controlModule != controller)) return;
 
-            if (timeLeft < lookaheadTimes[TimeWarp.CurrentRateIndex]
-                || timeWarp.warpRates[TimeWarp.CurrentRateIndex] > maxRate)
+            if ((TimeWarp.WarpMode == TimeWarp.Modes.HIGH) && ((timeLeft < lookaheadTimes[TimeWarp.CurrentRateIndex])
+                || (timeWarp.warpRates[TimeWarp.CurrentRateIndex] > maxRate)))
             {
                 warpDecrease(controller, true);
             }
-            else if (TimeWarp.CurrentRateIndex < timeWarp.warpRates.Length - 1
+            else if ((TimeWarp.CurrentRateIndex < timeWarp.warpRates.Length - 1
                 && lookaheadTimes[TimeWarp.CurrentRateIndex + 1] < timeLeft
                 && timeWarp.warpRates[TimeWarp.CurrentRateIndex + 1] <= maxRate)
+                || (TimeWarp.WarpMode == TimeWarp.Modes.LOW))
             {
                 warpIncrease(controller, false, maxRate);
             }
@@ -954,88 +981,232 @@ namespace MuMech
         {
             if (attitudeActive)
             {
-                int userCommanding = (Mathfx.Approx(s.pitch, 0, 0.1F) ? 0 : 1) + (Mathfx.Approx(s.yaw, 0, 0.1F) ? 0 : 2) + (Mathfx.Approx(s.roll, 0, 0.1F) ? 0 : 4);
+                // Used in the killRot activation calculation and drive_limit calculation
                 double precision = Math.Max(0.5, Math.Min(10.0, (vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle) * 20.0 / vesselState.MoI.magnitude));
-                double int_error = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0;
 
+                // Direction we want to be facing
                 Quaternion target = attitudeGetReferenceRotation(attitudeReference) * attitudeTarget;
                 Quaternion delta = Quaternion.Inverse(Quaternion.Euler(90, 0, 0) * Quaternion.Inverse(part.vessel.transform.rotation) * target);
-                /*
-                if (Mathf.Abs(Quaternion.Angle(delta, Quaternion.identity)) > 30) {
-                    delta = Quaternion.Slerp(Quaternion.identity, delta, 0.1F);
-                }
-                */
-                Vector3d deltaEuler = new Vector3d((delta.eulerAngles.x > 180) ? (delta.eulerAngles.x - 360.0F) : delta.eulerAngles.x, -((delta.eulerAngles.y > 180) ? (delta.eulerAngles.y - 360.0F) : delta.eulerAngles.y), (delta.eulerAngles.z > 180) ? (delta.eulerAngles.z - 360.0F) : delta.eulerAngles.z);
+
+                Vector3d deltaEuler = new Vector3d(
+                                                      (delta.eulerAngles.x > 180) ? (delta.eulerAngles.x - 360.0F) : delta.eulerAngles.x,
+                                                      -((delta.eulerAngles.y > 180) ? (delta.eulerAngles.y - 360.0F) : delta.eulerAngles.y),
+                                                      (delta.eulerAngles.z > 180) ? (delta.eulerAngles.z - 360.0F) : delta.eulerAngles.z
+                                                  );
+
+                Vector3d torque = new Vector3d(
+                                                      vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle,
+                                                      vesselState.torqueRAvailable,
+                                                      vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle
+                                              );
+
+                Vector3d inertia = Vector3d.Scale(
+                                                      MuUtils.Sign(vesselState.angularMomentum) * inertiaFactor,
+                                                      Vector3d.Scale(
+                                                          Vector3d.Scale(vesselState.angularMomentum, vesselState.angularMomentum),
+                                                          MuUtils.Invert(Vector3d.Scale(torque, vesselState.MoI))
+                                                      )
+                                                 );
+
+                // Determine the current level of error, this is then used to determine what act to apply
                 Vector3d err = deltaEuler * Math.PI / 180.0F;
-                Vector3d torque = new Vector3d(vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle, vesselState.torqueRAvailable, vesselState.torquePYAvailable + vesselState.torqueThrustPYAvailable * s.mainThrottle);
-                /*
-                if ((int_error < Math.Min(0.1, precision / 10.0)) && (Math.Abs(deltaEuler.y) < Math.Min(0.5, precision / 2.0)))
-                {
-                    Kp = Ki = Kd = 0;
-                }
-                else if ((int_error < precision) && (Math.Abs(deltaEuler.y) < precision * 5.0))
-                {
-                    Kp = 12;
-                    Ki = 0.001F;
-                    Kd = 30;
-                }
-                else
-                {
-                */
-                    Kp = 10000;
-                    Ki = Kd = 0;
-                    Vector3d inertia = Vector3d.Scale(MuUtils.Sign(vesselState.angularMomentum) * 1.1, Vector3d.Scale(Vector3d.Scale(vesselState.angularMomentum, vesselState.angularMomentum), MuUtils.Invert(Vector3d.Scale(torque, vesselState.MoI))));
-                    err += MuUtils.Reorder(inertia, 132);
-                //}
+                err += MuUtils.Reorder(inertia, 132);
                 err.Scale(Vector3d.Scale(vesselState.MoI, MuUtils.Invert(torque)));
-
-                float drive_limit = Mathf.Clamp01((float)(err.magnitude * drive_factor / precision));
-
-                integral += err * TimeWarp.fixedDeltaTime;
-                Vector3d deriv = (err - prev_err) / TimeWarp.fixedDeltaTime;
-                Vector3 act = Kp * err + Ki * integral + Kd * deriv;
                 prev_err = err;
 
-                if (userCommanding != 0)
-                {
-                    s.killRot = false;
+                // Make sure we are taking into account the correct timeframe we are working with
+                integral += err * TimeWarp.fixedDeltaTime;
 
-                    if (attitudeKILLROT)
-                    {
-                        attitudeTo(Quaternion.LookRotation(part.vessel.transform.up, -part.vessel.transform.forward), AttitudeReference.INERTIAL, null);
-                    }
-                }
-                else
+                // The inital value of act
+                // Act is ultimately what determines what the pitch, yaw and roll will be set to
+                // We make alterations to act between here and passing it into the pod controls
+                Vector3d act = Mathf.Clamp((float)attitudeError, attitudeErrorMinAct, attitudeErrorMaxAct) * Kp * err;
+                //+ Ki * integral + Kd * deriv; //Ki and Kd are always 0 so they have been commented out
+
+                // The maximum value the controls may be
+                float drive_limit = Mathf.Clamp01((float)(err.magnitude * drive_factor / precision));
+
+                // Reduce z by reduceZfactor, z seems to act far too high in relation to x and y
+                act.z = act.z / reduceZfactor;
+
+                // Reduce all 3 axis to a maximum of drive_limit
+                act.x = Mathf.Clamp((float)act.x, drive_limit * -1, drive_limit);
+                act.y = Mathf.Clamp((float)act.y, drive_limit * -1, drive_limit);
+                act.z = Mathf.Clamp((float)act.z, drive_limit * -1, drive_limit);
+
+                // Met is the time in seconds from take off
+                double met = vesselState.time - part.vessel.launchTime;
+
+                // Reduce effects of controls after launch and returns them gradually
+                // This helps to reduce large wobbles experienced in the first few seconds
+                if (met < activationDelay)
                 {
-                    s.killRot = (int_error < precision / 10.0) && (Math.Abs(deltaEuler.y) < Math.Min(0.5, precision / 2.0));
+                    act = act * ((met / activationDelay) * (met / activationDelay));
                 }
-                if ((userCommanding & 4) > 0)
-                {
-                    prev_err = new Vector3d(prev_err.x, prev_err.y, 0);
-                    integral = new Vector3d(integral.x, integral.y, 0);
-                    if (!attitudeRollMatters)
-                    {
-                        attitudeTo(Quaternion.LookRotation(attitudeTarget * Vector3d.forward, attitudeWorldToReference(-part.vessel.transform.forward, attitudeReference)), attitudeReference, null);
-                        _attitudeRollMatters = false;
-                    }
-                }
-                else
-                {
-                    if (!double.IsNaN(act.z)) s.roll = Mathf.Clamp(s.roll + act.z, -drive_limit, drive_limit);
-                    
-                }
-                if ((userCommanding & 3) > 0)
-                {
-                    prev_err = new Vector3d(0, 0, prev_err.z);
-                    integral = new Vector3d(0, 0, integral.z);
-                }
-                else
-                {
-                    if (!double.IsNaN(act.x)) s.pitch = Mathf.Clamp(s.pitch + act.x, -drive_limit, drive_limit);
-                    if (!double.IsNaN(act.y)) s.yaw = Mathf.Clamp(s.yaw + act.y, -drive_limit, drive_limit);
-                }
-                stress = Mathf.Min(Mathf.Abs(act.x), 1.0F) + Mathf.Min(Mathf.Abs(act.y), 1.0F) + Mathf.Min(Mathf.Abs(act.z), 1.0F);
+
+                // Averages out the act with the last few results, determined by the size of the a_avg_act array
+                act = averageVector3d(a_avg_act, act);
+
+                // Looks for rapid toggling of each axis and if found, then rest that axis for a while
+                // This helps prevents wobbles from getting larger
+                rapidRestX = restForPeriod(rapidToggleX, act.x, rapidRestX);
+                rapidRestY = restForPeriod(rapidToggleY, act.y, rapidRestY);
+                rapidRestZ = restForPeriod(rapidToggleZ, act.z, rapidRestZ);
+
+                // Reduce axis by rapidToggleRestFactor if rapid toggle rest has been triggered
+                if (rapidRestX > 0) act.x = act.x / rapidToggleRestFactor;
+                if (rapidRestY > 0) act.y = act.y / rapidToggleRestFactor;
+                if (rapidRestZ > 0) act.z = act.z / rapidToggleRestFactor;
+
+                // Sets the SetFlightCtrlState for pitch, yaw and roll
+                SetFlightCtrlState(act, deltaEuler, s, precision, drive_limit);
+
+                //Works out the stress
+                stress = Mathf.Min(Mathf.Abs((float)(act.x)), 1.0F) + Mathf.Min(Mathf.Abs((float)(act.y)), 1.0F) + Mathf.Min(Mathf.Abs((float)(act.z)), 1.0F);
             }
+        }
+
+        // Sets the SetFlightCtrlState for pitch, yaw and roll
+        private void SetFlightCtrlState(Vector3d act, Vector3d deltaEuler, FlightCtrlState s, double precision, float drive_limit)
+        {
+            // Is the user inputting pitch, yaw, roll
+            bool userCommandingPitchYaw = (Mathfx.Approx(s.pitch, 0, 0.1F) ? false : true) || (Mathfx.Approx(s.yaw, 0, 0.1F) ? false : true);
+            bool userCommandingRoll = (Mathfx.Approx(s.roll, 0, 0.1F) ? false : true);
+
+            if (userCommandingPitchYaw || userCommandingRoll)
+            {
+                s.killRot = false;
+                if (attitudeKILLROT)
+                {
+                    attitudeTo(Quaternion.LookRotation(part.vessel.transform.up, -part.vessel.transform.forward), AttitudeReference.INERTIAL, null);
+                }
+            }
+            else
+            {
+                //Determine amount of error
+                double int_error = attitudeActive ? Math.Abs(Vector3d.Angle(attitudeGetReferenceRotation(attitudeReference) * attitudeTarget * Vector3d.forward, vesselState.forward)) : 0;
+
+                //Determine if we should have killRot on or not
+                s.killRot = (int_error < precision / 10.0) && (Math.Abs(deltaEuler.y) < Math.Min(0.5, precision / 2.0));
+            }
+
+            if (userCommandingRoll)
+            {
+                prev_err = new Vector3d(prev_err.x, prev_err.y, 0);
+                integral = new Vector3d(integral.x, integral.y, 0);
+                if (!attitudeRollMatters)
+                {
+                    //human and computer roll
+                    attitudeTo(Quaternion.LookRotation(attitudeTarget * Vector3d.forward, attitudeWorldToReference(-part.vessel.transform.forward, attitudeReference)), attitudeReference, null);
+                    _attitudeRollMatters = false;
+                }
+            }
+            else
+            {
+                //computer roll only
+                if (!double.IsNaN(act.z)) s.roll = Mathf.Clamp((float)(s.roll + act.z), -drive_limit, drive_limit);
+            }
+
+            if (userCommandingPitchYaw)
+            {
+                //human and computer yaw and pitch
+                prev_err = new Vector3d(0, 0, prev_err.z);
+                integral = new Vector3d(0, 0, integral.z);
+            }
+            else
+            {
+                //computer pitch and yaw only
+                if (!double.IsNaN(act.x)) s.pitch = Mathf.Clamp((float)(s.pitch + act.x), -drive_limit, drive_limit);
+                if (!double.IsNaN(act.y)) s.yaw = Mathf.Clamp((float)(s.yaw + act.y), -drive_limit, drive_limit);
+            }
+
+        }
+
+        // Looks for rapid toggling of each axis and if found, then rest that axis for a while
+        // This prevents wobbles from getting larger
+        private int restForPeriod(int[] restArray, double vector, int resting)
+        {
+            int n = restArray.Length - 1; //Last elemet in the array, useful in loops and inseting element to the end
+            int insertPos = -1; //Position to insert a vector into
+            int vectorSign = Mathf.Clamp(Mathf.RoundToInt((float)vector), -1, 1); //Is our vector a negative, 0 or positive
+            float threshold = 0.95F; //Vector must be above this to class as hitting the upper limit
+            bool aboveThreshold = Mathf.Abs((float)vector) > threshold; //Determines if the input vector is above the threshold
+
+            // Decrease our resting count so we don't rest forever
+            if (resting > 0) resting--;
+
+            // Move all values in restArray towards 0 by 1, effectly taking 1 frame off the count
+            // Negative values indicate the vector was at the minimum threshold
+            for (int i = n; i >= 0; i--) restArray[i] = restArray[i] - Mathf.Clamp(restArray[i], -1, 1);
+
+            // See if the oldest value has reached 0, if it has move all values 1 to the left
+            if (restArray[0] == 0 && restArray[1] != 0)
+            {
+                for (int i = 0; i < n - 1; i++) restArray[i] = restArray[i + 1]; //shuffle everything down to the left
+                restArray[n] = 0; //item n has just been shifted to the left, so reset value to 0
+            }
+
+            // Find our position to insert the vector sign, insertPos will be -1 if no empty position is found
+            for (int i = n; i >= 0; i--)
+            {
+                if (restArray[i] == 0) insertPos = i;
+            }
+
+            // If we found a valid insert position, and the sign is different to the last sign, then insert it
+            if (
+                aboveThreshold && ( // First make sure we are above the threshold
+
+                    // If in position 0, the sign is always different
+                    (insertPos == 0) ||
+
+                    // If in position 1 to n-1, then make sure the previous sign is different
+                // We don't want to rest if the axis is simply at the max for a while such as it may be for hard turns
+                    (insertPos > 0 && vectorSign != Mathf.Clamp(restArray[insertPos - 1], -1, 1))
+                )
+               ) // end if aboveThreshold
+            {
+                // Insert restFrameTolerance and the vectors sign
+                restArray[insertPos] = restFrameTolerance * vectorSign;
+            }
+
+            // Determine if the array is full, we are above the threshold, and the sign is different to the last
+            if (aboveThreshold && insertPos == -1 && vectorSign != Mathf.Clamp(restArray[n], -1, 1))
+            {
+                // Array is full, remove oldest value to make room for new value
+                for (int i = 0; i < n - 1; i++)
+                {
+                    restArray[i] = restArray[i + 1];
+                }
+                // Insert new value
+                restArray[n] = restFrameTolerance * vectorSign;
+
+                // Sets the axis to rest for the length of time 3/4 of the frame difference between the first item and last item
+                resting = (int)Math.Ceiling(((Math.Abs(restArray[n]) - Math.Abs(restArray[0])) / 4.0) * 3.0);
+            }
+
+            // Returns number of frames to rest for, or 0 for no rest
+            return resting;
+        }
+
+        // Averages out the act with the last few results, determined by the size of the vectorArray array
+        private Vector3d averageVector3d(Vector3d[] vectorArray, Vector3d newVector)
+        {
+            double x = 0.0, y = 0.0, z = 0.0;
+            int n = vectorArray.Length;
+            int k = 0;
+
+            // Loop through the array to determine average
+            // Give more weight to newer items and less weight to older items
+            for (int i = 0; i < n; i++)
+            {
+                k += i + 1;
+                if (i < n - 1) { vectorArray[i] = vectorArray[i + 1]; }
+                else { vectorArray[i] = newVector; }
+                x += vectorArray[i].x * (i + 1);
+                y += vectorArray[i].y * (i + 1);
+                z += vectorArray[i].z * (i + 1);
+            }
+            return new Vector3d(x / k, y / k, z / k);
         }
 
         private void driveAutoStaging()
@@ -1097,7 +1268,7 @@ namespace MuMech
                 switch (main_windowStat)
                 {
                     case WindowStat.OPENING:
-                        main_windowProgr += Time.fixedDeltaTime;
+                        main_windowProgr += Time.deltaTime;
                         if (main_windowProgr >= 1)
                         {
                             main_windowProgr = 1;
@@ -1105,7 +1276,7 @@ namespace MuMech
                         }
                         break;
                     case WindowStat.CLOSING:
-                        main_windowProgr -= Time.fixedDeltaTime;
+                        main_windowProgr -= Time.deltaTime;
                         if (main_windowProgr <= 0)
                         {
                             main_windowProgr = 0;
@@ -1178,6 +1349,7 @@ namespace MuMech
             modules.Add(new MechJebModuleOrbitOper(this));
             modules.Add(new MechJebModuleRendezvous(this));
             modules.Add(new MechJebModuleILS(this));
+            modules.Add(new MechJebModuleTablePhase(this));
 
             //modules.Add(new MechJebModuleOrbitPlane(this));
 
@@ -1194,12 +1366,12 @@ namespace MuMech
             }
 
             part.Events.Add(new BaseEvent("MechJebLua", MechJebLua));
+
+            loadSettings();
         }
 
         public void onFlightStart()
         {
-            loadSettings();
-
             RenderingManager.AddToPostDrawQueue(0, new Callback(drawGUI));
             firstDraw = true;
 
@@ -1355,7 +1527,6 @@ namespace MuMech
                 integral = Vector3.zero;
                 prev_err = Vector3.zero;
 
-                print("MechJeb resetting PID controller.");
                 attitudeChanged = false;
 
                 foreach (ComputerModule module in modules)

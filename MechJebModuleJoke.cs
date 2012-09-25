@@ -174,7 +174,7 @@ namespace MuMech
         {
             if (randomExplosions)
             {
-                if (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate && UnityEngine.Random.Range(0, (int)(15.0 / vesselState.deltaT)) == 0)
+                if (((TimeWarp.WarpMode == TimeWarp.Modes.LOW) || (TimeWarp.CurrentRate <= TimeWarp.MaxPhysicsRate)) && UnityEngine.Random.Range(0, (int)(15.0 / vesselState.deltaT)) == 0)
                 {
                     Part victim = part.vessel.parts[UnityEngine.Random.Range(0, part.vessel.parts.Count)];
                     if (victim != this.part && !(victim is CommandPod))

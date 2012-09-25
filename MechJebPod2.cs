@@ -27,7 +27,7 @@ public class MuMechJebPod2 : CommandPod
     public Quaternion innereyeRot;
     public Transform[] eyelid = null;
     public Quaternion[] eyelidRot = null;
-    public LandingLeg[] doors = null;
+    public LandingLeg[] doors = { null, null, null, null };
     FlightCamera cam = null;
 
     public BlinkStatus blinkStatus = BlinkStatus.NONE;
@@ -160,7 +160,7 @@ public class MuMechJebPod2 : CommandPod
         brainStress += core.stress * TimeWarp.fixedDeltaTime;
         brainStress -= brainStress * (((doors[0] == null) || (doors[0].legState == LandingLeg.LegStates.DEPLOYED)) ? brainStressReliefOpen : brainStressReliefClosed) * TimeWarp.fixedDeltaTime;
 
-        if ((brainStress > brainStressMin) && (doors[0] == null) || (doors[0].legState == LandingLeg.LegStates.DEPLOYED))
+        if ((brainStress > brainStressMin) && ((doors[0] == null) || (doors[0].legState == LandingLeg.LegStates.DEPLOYED)))
         {
             brain[0].particleEmitter.maxEmission = brain[1].particleEmitter.maxEmission = (brainStress - brainStressMin) * 1000.0F;
             brain[0].particleEmitter.minEmission = brain[1].particleEmitter.minEmission = brain[0].particleEmitter.maxEmission / 2.0F;

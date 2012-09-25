@@ -73,6 +73,7 @@ namespace MuMech
         public double torqueThrustPYAvailable;
         public double massDrag;
         public double atmosphericDensity;
+        public double angleToPrograde;
 
         public void Update(Vessel vessel)
         {
@@ -157,6 +158,17 @@ namespace MuMech
             latitude.value = vessel.mainBody.GetLatitude(CoM);
             longitude.value = ARUtils.clampDegrees(vessel.mainBody.GetLongitude(CoM));
 
+            if (vessel.mainBody != Planetarium.fetch.Sun)
+            {
+                Vector3d delta = vessel.mainBody.getPositionAtUT(Planetarium.GetUniversalTime() + 1) - vessel.mainBody.getPositionAtUT(Planetarium.GetUniversalTime() - 1);
+                Vector3d plUp = Vector3d.Cross(vessel.mainBody.getPositionAtUT(Planetarium.GetUniversalTime()) - vessel.mainBody.referenceBody.getPositionAtUT(Planetarium.GetUniversalTime()), vessel.mainBody.getPositionAtUT(Planetarium.GetUniversalTime() + vessel.mainBody.orbit.period / 4) - vessel.mainBody.referenceBody.getPositionAtUT(Planetarium.GetUniversalTime() + vessel.mainBody.orbit.period / 4)).normalized;
+                angleToPrograde = ARUtils.clampDegrees360((((vessel.orbit.inclination > 90) || (vessel.orbit.inclination < -90)) ? 1 : -1) * ((Vector3)up).AngleInPlane(plUp, delta));
+            }
+            else
+            {
+                angleToPrograde = 0;
+            }
+
             radius = (CoM - vessel.mainBody.position).magnitude;
 
             mass = thrustAvailable = thrustMinimum = massDrag = torqueRAvailable = torquePYAvailable = torqueThrustPYAvailable = 0;
@@ -191,7 +203,7 @@ namespace MuMech
                             torqueThrustPYAvailable += Math.Sin(Math.Abs(((LiquidFuelEngine)p).gimbalRange) * Math.PI / 180) * ((LiquidFuelEngine)p).maxThrust * (p.Rigidbody.worldCenterOfMass - CoM).magnitude;
                         }
                     }
-                    else if (p is SolidRocket)
+                    else if (p is SolidRocket && !p.ActivatesEvenIfDisconnected)
                     {
                         double usableFraction = Vector3d.Dot((p.transform.rotation * ((SolidRocket)p).thrustVector).normalized, forward);
                         thrustAvailable += ((SolidRocket)p).thrust * usableFraction;
