@@ -74,5 +74,11 @@ class MuMechObliterator : Part
             Camera.mainCamera.GetComponent<VABCamera>().maxHeight *= 100;
             Camera.mainCamera.GetComponent<VABCamera>().maxDistance *= 100;
         }
+        if (GameObject.Find("xport_sph3") != null)
+        {
+            GameObject.Destroy(GameObject.Find("xport_sph3"));
+            Camera.mainCamera.GetComponent<SPHCamera>().maxHeight *= 100;
+            Camera.mainCamera.GetComponent<SPHCamera>().maxDistance *= 100;
+        }
     }
 }

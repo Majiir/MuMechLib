@@ -950,7 +950,7 @@ namespace MuMech
             if (warpPoint == WarpPoint.SOI_CHANGE)
             {
                 //ending warp-to-soi-change is done in the handleReferenceBodyChange callback
-                core.warpIncrease(this, false, 1000.0);
+                core.warpIncrease(this);
             }
             else
             {
