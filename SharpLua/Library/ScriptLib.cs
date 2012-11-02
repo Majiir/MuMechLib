@@ -125,11 +125,27 @@ namespace SharpLua.Library
                 | BindingFlags.FlattenHierarchy;
             
             // Start by looking for a method call
-            MethodInfo m2 = t.GetMethod(m,
-                                        bindingFlags | BindingFlags.InvokeMethod
-                                       );
-            if (m2 != null)
-                return ObjectToLua.ToLuaValue(m2.Invoke(t, args2.ToArray()));
+            foreach (MethodInfo m2 in t.GetMethods(bindingFlags | BindingFlags.InvokeMethod))
+            {
+                if (m2.Name == m)
+                {
+                    UnityEngine.MonoBehaviour.print("Found " + m2 + " count = " + m2.GetGenericArguments().Length);
+                    try
+                    {
+                        UnityEngine.MonoBehaviour.print("Trying " + m2);
+                        object result = m2.Invoke(t, args2.ToArray());
+                        return ObjectToLua.ToLuaValue(result);
+                    }
+                    catch (ArgumentException e)
+                    {
+                        UnityEngine.MonoBehaviour.print(e);
+                    }
+                    catch (TargetParameterCountException e)
+                    {
+                        UnityEngine.MonoBehaviour.print(e);
+                    }
+                }
+            }
 
             // Now loook for a property get
             PropertyInfo p = t.GetProperty(m, bindingFlags | BindingFlags.GetProperty);

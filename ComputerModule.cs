@@ -206,6 +206,14 @@ namespace MuMech
         {
         }
 
+        public virtual void onPartAttach(Part parent)
+        {
+        }
+
+        public virtual void onPartDetach()
+        {
+        }
+
         protected virtual void WindowGUI(int windowID)
         {
             GUI.DragWindow();

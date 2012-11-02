@@ -65,9 +65,14 @@ namespace SharpLua.LuaTypes
                     throw new Exception("Error: coroutine is dead, it cannot be resumed!");
                 try {
                     if (_status == "suspended")
-                        thread.Resume();
+                        lock (thread)
+                        {
+                            Monitor.Pulse(thread);
+                        }
                     else
-                    thread.Start();
+                    {
+                        thread.Start();
+                    }
                     _status = "running";
                 } catch (Exception ex) {
                     _status = "dead";
@@ -93,7 +98,10 @@ namespace SharpLua.LuaTypes
             if (thread != null)
             {
                 _status = "suspended";
-                thread.Suspend();
+                lock (thread)
+                {
+                    Monitor.Wait(thread);
+                }
             }
         }
         

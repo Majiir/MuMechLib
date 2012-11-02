@@ -11,6 +11,7 @@ using System.Collections.Generic;
 using KSP.IO;
 using System.Reflection;
 using SharpLua.LuaTypes;
+using System.Linq;
 
 namespace SharpLua
 {
@@ -64,6 +65,29 @@ namespace SharpLua
             {
                 object enumValue = Enum.Parse(fieldInfo.FieldType, (string)value);
                 fieldInfo.SetValue(obj, enumValue);
+            }
+            else if (fieldInfo.FieldType.IsArray && (value is LuaTable))
+            {
+                Type elem = fieldInfo.FieldType.GetElementType();
+                if (new string[] { "System.Int32", "System.Single", "System.Double" }.Any(i => i == elem.FullName))
+                {
+                    double[] tmp = ((LuaTable)value).ToDoubleArray();
+                    if (elem.FullName == "System.Int32") {
+                        fieldInfo.SetValue(obj, Array.ConvertAll(tmp, i => (int)i));
+                    }
+                    else if (elem.FullName == "System.Single")
+                    {
+                        fieldInfo.SetValue(obj, Array.ConvertAll(tmp, i => (float)i));
+                    }
+                    else if (elem.FullName == "System.Double")
+                    {
+                        fieldInfo.SetValue(obj, tmp);
+                    }
+                }
+                else if (elem.FullName == "System.String")
+                {
+                    fieldInfo.SetValue(obj, ((LuaTable)value).ToStringArray());
+                }
             }
             else
             {
@@ -136,29 +160,33 @@ namespace SharpLua
             {
                 return new LuaFunction((LuaValue[] args) =>
                                        {
+                                           List<object> args2 = new List<object>();
+                                           foreach (LuaValue v in args)
+                                               args2.Add(v.Value);
+
                                            mi = null;
                                            foreach (MethodInfo m in miarr)
                                            {
                                                if (m.Name == member)
                                                {
-                                                   if (m.GetGenericArguments().Length == args.Length)
-                                                   {
-                                                       mi = m;
-                                                   }
+                                                   UnityEngine.MonoBehaviour.print("Found " + m + " count = " + m.GetGenericArguments().Length);
+                                                    try
+                                                    {
+                                                        UnityEngine.MonoBehaviour.print("Trying " + m);
+                                                        object result = m.Invoke(control, args2.ToArray());
+                                                        return ToLuaValue(result);
+                                                    }
+                                                    catch (ArgumentException e)
+                                                    {
+                                                        UnityEngine.MonoBehaviour.print(e);
+                                                    }
+                                                    catch (TargetParameterCountException e)
+                                                    {
+                                                        UnityEngine.MonoBehaviour.print(e);
+                                                    }
                                                }
                                            }
-                                           if (mi != null)
-                                           {
-                                               List<object> args2 = new List<object>();
-                                               foreach (LuaValue v in args)
-                                                   args2.Add(v.Value);
-                                               object result = mi.Invoke(control, args2.ToArray());
-                                               return ToLuaValue(result);
-                                           }
-                                           else
-                                           {
-                                               throw new Exception(string.Format("Cannot get {0}  with {2} arguments from {1}", member, control, args.Length));
-                                           }
+                                           throw new Exception(string.Format("Cannot get {0}  with {2} arguments from {1}", member, control, args.Length));
                                        });
             }
             

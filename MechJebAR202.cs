@@ -1,4 +1,5 @@
-﻿using System;
+﻿
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -305,6 +306,19 @@ public class MuMechJebAR202 : MuMechPart
         core.onUnpack();
         base.onUnpack();
     }
+
+    protected override void onPartAttach(Part parent)
+    {
+        core.onPartAttach(parent);
+        base.onPartAttach(parent);
+    }
+
+    protected override void onPartDetach()
+    {
+        core.onPartDetach();
+        base.onPartDetach();
+    }
+
 }
 
 

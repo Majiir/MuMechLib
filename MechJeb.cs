@@ -297,4 +297,17 @@ public class MuMechJeb : MuMechPart
         core.onUnpack();
         base.onUnpack();
     }
+
+    protected override void onPartAttach(Part parent)
+    {
+        core.onPartAttach(parent);
+        base.onPartAttach(parent);
+    }
+
+    protected override void onPartDetach()
+    {
+        core.onPartDetach();
+        base.onPartDetach();
+    }
+
 }

@@ -447,7 +447,7 @@ namespace SharpLua.LuaTypes
                 SetKeyValue(key, value);
             }
         }
-        
+
         public LuaValue this[int index]
         {
             get
@@ -458,6 +458,38 @@ namespace SharpLua.LuaTypes
             {
                 SetKeyValue(new LuaNumber(index) /* + 1*/, value);
             }
+        }
+
+        public double[] ToDoubleArray()
+        {
+            List<double> tmp = new List<double>();
+
+            for (int i = 1; i <= Count; i++)
+            {
+                LuaValue v = GetValue(i);
+                if ((v != LuaNil.Nil) && (v is LuaNumber))
+                {
+                    tmp.Add(((LuaNumber)v).Number);
+                }
+            }
+
+            return tmp.ToArray();
+        }
+
+        public string[] ToStringArray()
+        {
+            List<string> tmp = new List<string>();
+
+            for (int i = 1; i <= Count; i++)
+            {
+                LuaValue v = GetValue(i);
+                if (v != LuaNil.Nil)
+                {
+                    tmp.Add(v.ToString());
+                }
+            }
+
+            return tmp.ToArray();
         }
     }
 }

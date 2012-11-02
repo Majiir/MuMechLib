@@ -1211,6 +1211,8 @@ namespace MuMech
 
         private void driveAutoStaging()
         {
+            if (!part.vessel.isActiveVessel) return;
+
             //if autostage enabled, and if we are not waiting on the pad, and if there are stages left,
             //and if we are allowed to continue staging, and if we didn't just fire the previous stage
             if (autoStage && liftedOff && Staging.CurrentStage > 0 && Staging.CurrentStage > autoStageLimit 
@@ -1499,6 +1501,25 @@ namespace MuMech
                 allJebs[part.vessel].jebs.Add(this);
             }
 
+            if (InputLockManager.GetControlLock("vessel_noCrew_" + part.vessel.id.ToString()) == ControlTypes.ALL_SHIP_CONTROLS)
+            {
+                Dictionary<Part, int> tmp = new Dictionary<Part, int>();
+                foreach (Part p in part.vessel.parts)
+                {
+                    if (p.CrewCapacity > 0)
+                    {
+                        tmp.Add(p, p.CrewCapacity);
+                        p.CrewCapacity = 0;
+                    }
+                }
+                InputLockManager.RemoveControlLock("vessel_noCrew_" + part.vessel.id.ToString());
+                part.vessel.MakeActive();
+                foreach (KeyValuePair<Part, int> t in tmp)
+                {
+                    t.Key.CrewCapacity = t.Value;
+                }
+            }
+
             foreach (ComputerModule module in modules)
             {
                 module.onPartUpdate();
@@ -1660,6 +1681,7 @@ namespace MuMech
                     }
                     printk = true;
                 }
+
                 if (Input.GetKeyDown(KeyCode.Keypad6))
                 {
                     switch (calibrationTarget)
@@ -1896,6 +1918,23 @@ namespace MuMech
             }
         }
 
+        public void onPartAttach(Part parent)
+        {
+            foreach (ComputerModule module in modules)
+            {
+                module.onPartAttach(parent);
+            }
+        }
+
+        public void onPartDetach()
+        {
+            foreach (ComputerModule module in modules)
+            {
+                module.onPartDetach();
+            }
+        }
+
+
         public ComputerModule getModule(string module)
         {
             foreach (ComputerModule m in modules)
@@ -2005,19 +2044,9 @@ namespace MuMech
 
         public LuaValue proxyAttitudeTo(LuaValue[] arg)
         {
-            if (arg.Count() != 2)
+            if ((arg.Count() != 2) || !(arg[0] is LuaTable))
             {
                 throw new Exception("usage: attitudeTo(vector, reference)");
-            }
-
-            Vector3d dir;
-            try
-            {
-                dir = LuaUtils.valueToVector3d(arg[0]);
-            }
-            catch (Exception e)
-            {
-                throw new Exception("attitudeTo: invalid vector - " + e.Message);
             }
 
             AttitudeReference r;
@@ -2030,7 +2059,34 @@ namespace MuMech
                 throw new Exception("attitudeTo: invalid reference");
             }
 
-            return LuaBoolean.From(attitudeTo(dir, r, autom8));
+            if (((LuaTable)arg[0]).Count == 4)
+            {
+                Quaternion dir;
+                try
+                {
+                    dir = LuaUtils.valueToQuaternion(arg[0]);
+                }
+                catch (Exception e)
+                {
+                    throw new Exception("attitudeTo: invalid quaternion - " + e.Message);
+                }
+
+                return LuaBoolean.From(attitudeTo(dir, r, autom8));
+            }
+            else
+            {
+                Vector3d dir;
+                try
+                {
+                    dir = LuaUtils.valueToVector3d(arg[0]);
+                }
+                catch (Exception e)
+                {
+                    throw new Exception("attitudeTo: invalid vector - " + e.Message);
+                }
+
+                return LuaBoolean.From(attitudeTo(dir, r, autom8));
+            }
         }
 
         public LuaValue proxyAttitudeDeactivate(LuaValue[] arg)

@@ -809,6 +809,7 @@ namespace MuMech
             double angleOffset = Math.Abs(Vector3d.Angle(targetArrivalPosition - part.vessel.mainBody.position,
                                                          vesselArrivalPositionTargetPlane - part.vessel.mainBody.position));
 
+            //If within 1 degree of our angle then cut warp and set state to injecting
             if (Math.Abs(angleOffset) < 1)
             {
                 transState = TRANSState.INJECTING;
@@ -947,47 +948,46 @@ namespace MuMech
         {
             s.mainThrottle = 0.0F;
 
+            double timeToTarget = 0.0;
+            double timeSinceTarget = 0.0;
+
             if (warpPoint == WarpPoint.SOI_CHANGE)
             {
-                //ending warp-to-soi-change is done in the handleReferenceBodyChange callback
-                core.warpIncrease(this);
+                timeToTarget = part.vessel.orbit.timeToTransition1;
+                timeSinceTarget = double.MaxValue;
             }
-            else
-            {
-                //warp to periapsis or apoapsis
-                double timeToTarget;
-                double timeSinceTarget;
-                if (warpPoint == WarpPoint.APOAPSIS)
-                {
-                    if (part.vessel.orbit.eccentricity > 1.0)
-                    {
-                        endOperation();
-                        return;
-                    }
 
-                    timeToTarget = (part.vessel.orbit.timeToAp - warpTimeOffset + part.vessel.orbit.period) % part.vessel.orbit.period;
-                    timeSinceTarget = (2 * part.vessel.orbit.period - part.vessel.orbit.timeToAp + warpTimeOffset) % part.vessel.orbit.period;
+            else if (warpPoint == WarpPoint.APOAPSIS)
+            {
+                if (part.vessel.orbit.eccentricity > 1.0)
+                {
+                    endOperation();
+                    return;
+                }
+
+                timeToTarget = (part.vessel.orbit.timeToAp - warpTimeOffset + part.vessel.orbit.period) % part.vessel.orbit.period;
+                timeSinceTarget = (2 * part.vessel.orbit.period - part.vessel.orbit.timeToAp + warpTimeOffset) % part.vessel.orbit.period;
+            }
+
+            else if (warpPoint == WarpPoint.PERIAPSIS)
+            {
+                double timeToPe = part.vessel.orbit.timeToPe;
+
+                if (part.vessel.orbit.eccentricity < 1)
+                {
+                    timeToTarget = (timeToPe - warpTimeOffset + part.vessel.orbit.period) % part.vessel.orbit.period;
+                    timeSinceTarget = (2 * part.vessel.orbit.period - timeToPe + warpTimeOffset) % part.vessel.orbit.period;
                 }
                 else
                 {
-                    double timeToPe = part.vessel.orbit.timeToPe;
-
-                    if (part.vessel.orbit.eccentricity < 1)
-                    {
-                        timeToTarget = (timeToPe - warpTimeOffset + part.vessel.orbit.period) % part.vessel.orbit.period;
-                        timeSinceTarget = (2 * part.vessel.orbit.period - timeToPe + warpTimeOffset) % part.vessel.orbit.period;
-                    }
-                    else
-                    {
-                        timeToTarget = timeToPe - warpTimeOffset;
-                        timeSinceTarget = 1.0e30;
-                    }
+                    timeToTarget = timeToPe - warpTimeOffset;
+                    timeSinceTarget = 1.0e30;
                 }
-
-                if (timeToTarget < 1.0 || timeSinceTarget < 10.0) endOperation();
-                else core.warpTo(this, timeToTarget, warpLookaheadTimes);
-
             }
+            
+            if (timeToTarget < 1.0 || timeSinceTarget < 10.0) endOperation();
+            else core.warpTo(this, timeToTarget, warpLookaheadTimes);
+
 
         }
 
